@@ -461,7 +461,7 @@ if __name__ == "__main__":
         best_train_accuracy = -1.
         train_len = train_data.length
         dev_len = dev_data.length
-        sanity_set_size = 1000 # for speed
+        sanity_set_size = 100 # for speed
         patience = 0
         previous_predicted_actions = [[None]*sanity_set_size]
 
@@ -471,14 +471,14 @@ if __name__ == "__main__":
         avg_loss = -1  # avg training loss that is...
 
         # does not change from epoch to epoch due to re-shuffling
-        dev_set = dev_data.iter(indices=sanity_set_size)
+        dev_set = dev_data.iter()
 
         for epoch in xrange(epochs):
             print 'training...'
             then = time.time()
 
             # compute loss for each sample and update
-            for i, (input, output) in enumerate(train_data.iter(shuffle=True,indices=sanity_set_size)):
+            for i, (input, output) in enumerate(train_data.iter(shuffle=True)):
                 # here we do training
                 dy.renew_cg()
                 loss, _, _ = ti.transduce(input, output)
