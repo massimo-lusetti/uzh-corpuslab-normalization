@@ -4,9 +4,9 @@
 
 Usage:
   norm_soft.py [--dynet-seed SEED] [--dynet-mem MEM]
-  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--action-input=ACTION] [--layers=LAYERS]
+  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS]
   [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION] [--eval]
-  TRAIN_PATH DEV_PATH RESULTS_PATH [--test_path=TEST_PATH] [--model='HARD']
+  TRAIN_PATH DEV_PATH RESULTS_PATH [--test_path=TEST_PATH]
 
 Arguments:
   TRAIN_PATH    destination path, possibly relative to "data/all/", e.g. task1/albanian-train-low
@@ -20,7 +20,6 @@ Options:
   --input=INPUT                 input vector dimensions [default: 100]
   --hidden=HIDDEN               hidden layer dimensions [default: 200]
   --feat-input=FEAT             feature input vector dimension [default: 20]
-  --action-input=ACTION         action feature vector dimension [default: 100]
   --layers=LAYERS               amount of layers in LSTMs  [default: 1]
   --dropout=DROPOUT             amount of dropout in LSTMs [default: 0]
   --epochs=EPOCHS               number of training epochs   [default: 30]
