@@ -268,7 +268,7 @@ if __name__ == "__main__":
         train_path = check_path(arguments['--train_path'], 'train_path')
         train_data = list(read(train_path, over_segs))
         print 'Train data has {} examples'.format(len(train_data))
-        dev_path = check_path(arguments['--train_path'], 'train_path')
+        dev_path = check_path(arguments['--dev_path'], 'dev_path')
         dev_data = list(read(dev_path, over_segs))
         print 'Dev data has {} examples'.format(len(dev_data))
         
