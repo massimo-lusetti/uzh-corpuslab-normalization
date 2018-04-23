@@ -4,11 +4,11 @@
 
 Usage:
   norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM]
-    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS]
+    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft.py test [--dynet-seed SEED] [--dynet-mem MEM]
-    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS]
+    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
     MODEL_FOLDER --test_path=TEST_FILE
 
 Arguments:
@@ -29,6 +29,7 @@ Options:
   --train_path=TRAIN_FILE       train set path, possibly relative to DATA_FOLDER, only for training
   --dev_path=DEV_FILE           dev set path, possibly relative to DATA_FOLDER, only for training
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
+  --vocab_path=VOCAB_PATH       vocab set path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
 """
 
 from __future__ import division
@@ -46,41 +47,17 @@ import dynet as dy
 import numpy as np
 import os
 
+from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path
+from vocab_builder import build_vocabulary, Vocab
 
-# Default paths
-SRC_FOLDER = os.path.dirname(__file__)
-RESULTS_FOLDER = os.path.join(SRC_FOLDER, '../results')
-DATA_FOLDER = os.path.join(SRC_FOLDER, '../data/')
-
-
-
-# Model defaults
-BEGIN_CHAR   = u'<s>'
-STOP_CHAR   = u'</s>'
-UNK_CHAR = '<unk>'
-MAX_PRED_SEQ_LEN = 50
-OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001,
+MAX_PRED_SEQ_LEN = 50 # option
+OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #common
                                                    beta_1=0.9, beta_2=0.999, eps=1e-8),
-            'SGD'     : dy.SimpleSGDTrainer,
-            'ADADELTA': dy.AdadeltaTrainer}
+    'SGD'     : dy.SimpleSGDTrainer,
+        'ADADELTA': dy.AdadeltaTrainer}
 
 
 ### IO handling and evaluation
-
-def check_path(path, arg_name, is_data_path=True):
-    if not os.path.exists(path):
-        prefix = DATA_FOLDER if is_data_path else RESULTS_FOLDER
-        tmp = os.path.join(prefix, path)
-        if os.path.exists(tmp):
-            path = tmp
-        else:
-            if is_data_path:
-                print '%s incorrect: %s and %s' % (arg_name, path, tmp)
-                raise ValueError
-            else: #results path
-                os.makedirs(tmp)
-                path = tmp
-    return path
 
 def load_data(filename):
     """ Load data from file
@@ -149,33 +126,6 @@ def log_to_file(log_file_name, e, avg_train_loss, train_accuracy, dev_accuracy):
     with open(log_file_name, "a") as logfile:
         logfile.write("{}\t{}\t{}\t{}\n".format(e, avg_train_loss, train_accuracy, dev_accuracy))
 
-
-# represents a bidirectional mapping from strings to ints
-class Vocab(object):
-    def __init__(self, w2i):
-        self.w2i = dict(w2i)
-        self.i2w = {i:w for w,i in w2i.iteritems()}
-    
-    @classmethod
-    def from_list(cls, words):
-        w2i = {}
-        idx = 0
-        for word in words:
-            w2i[word] = idx
-            idx += 1
-        return Vocab(w2i)
-    
-    @classmethod
-    def from_file(cls, vocab_fname):
-        w2i = {}
-        with file(vocab_fname) as fh:
-            for line in fh:
-                word, idx = line.strip().split()
-                w2i[word] = idx
-        return Vocab(w2i)
-
-    def size(self): return len(self.w2i.keys())
-
 # class to handle data
 class SoftDataSet(object):
     def __init__(self, inputs, outputs):
@@ -205,21 +155,12 @@ class SoftDataSet(object):
         return cls(inputs, outputs, *args, **kwargs)
 
 class SoftAttention(object):
-    def __init__(self, model, model_hyperparams, train_data=None):
+    def __init__(self, model, model_hyperparams):#, train_data=None):
         
         self.hyperparams = model_hyperparams
         
-        if train_data:
-            # Build vocabulary from the train data
-            self.build_vocabulary(train_data)
-        else:
-            # Load vocabulary of pretrained model
-            if os.path.exists(self.hyperparams['VOCAB_PATH']):
-                self.vocab = Vocab.from_file(self.hyperparams['VOCAB_PATH'])
-            else:
-                print 'No vocabulary path'
-                raise ValueError
-
+        print 'Loading vocabulary from {}:'.format(self.hyperparams['VOCAB_PATH'])
+        self.vocab = Vocab.from_file(self.hyperparams['VOCAB_PATH'])
         self.BEGIN   = self.vocab.w2i[BEGIN_CHAR]
         self.STOP   = self.vocab.w2i[STOP_CHAR]
         self.UNK       = self.vocab.w2i[UNK_CHAR]
@@ -232,13 +173,6 @@ class SoftAttention(object):
             print '{:20} = {}'.format(k, v)
         print
         
-    def build_vocabulary(self, train_data):
-        
-        chars = list(set([c for w in train_data.inputs for c in w] + [c for w in train_data.outputs for c in w])) + [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
-        print 'Example of vocabulary items:' + u', '.join(chars[:10])
-        self.vocab = Vocab.from_list(chars)
-    
-
     def build_model(self, model):
         
         # BiLSTM for input
@@ -312,7 +246,11 @@ class SoftAttention(object):
         
         # convert _true_output string to list of vocabulary indeces
         if _true_output:
-            true_output = [self.vocab.w2i[a] for a in _true_output]
+            try:
+                true_output = [self.vocab.w2i[a] for a in _true_output]
+            except:
+                print a
+                print _true_output
             true_output += [self.STOP]
             true_output = list(reversed(true_output))
         
@@ -343,7 +281,6 @@ class SoftAttention(object):
         while not len(pred_history) == MAX_PRED_SEQ_LEN:
             # compute probability over vocabulary and choose a prediction
             # either from the true prediction at train time or based on the model at test time
-            
             
             # decoder next state
             prev_pred_id = pred_history[-1]
@@ -395,10 +332,10 @@ if __name__ == "__main__":
         data_set = SoftDataSet
         train_path = check_path(arguments['--train_path'], 'train_path')
         train_data = data_set.from_file(train_path)
-        print 'Train data has {} examples'.format(len(train_data))
-        dev_path = check_path(arguments['-dev_path'], 'dev_path')
+        print 'Train data has {} examples'.format(train_data.length)
+        dev_path = check_path(arguments['--dev_path'], 'dev_path')
         dev_data = data_set.from_file(dev_path)
-        print 'Dev data has {} examples'.format(len(dev_data))
+        print 'Dev data has {} examples'.format(dev_data.length)
     
         print 'Checking if any special symbols in data...'
         for data, name in [(train_data, 'train'), (dev_data, 'dev')]:
@@ -408,9 +345,15 @@ if __name__ == "__main__":
             print '{} data does not contain special symbols'.format(name)
         print
         
+        vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
+        if not os.path.exists(vocab_path):
+            print 'Building vocabulary..'
+            data = set(train_data.inputs + train_data.outputs)
+            build_vocabulary(data, vocab_path)
+
+        # Paths for checks and results
         log_file_name   = model_folder + '/log.txt'
         best_model_path  = model_folder + '/bestmodel.txt'
-        vocab_path = model_folder + '/vocab.txt'
         output_file_path = model_folder + '/best.dev'
 
         # Model hypoparameters
@@ -423,7 +366,7 @@ if __name__ == "__main__":
     
         print 'Building model...'
         model = dy.Model()
-        ti = SoftAttention(model, model_hyperparams, train_data)
+        ti = SoftAttention(model, model_hyperparams)
 
         # Training hypoparameters
         train_hyperparams = {'MAX_PRED_SEQ_LEN': MAX_PRED_SEQ_LEN,
@@ -523,7 +466,7 @@ if __name__ == "__main__":
 
             log_to_file(log_file_name, epoch, avg_train_loss, train_accuracy, dev_accuracy)
 
-            if patience == max_patience:
+            if patience == train_hyperparams['PATIENCE']:
                 print 'out of patience after {} epochs'.format(epoch)
                 train_progress_bar.finish()
                 break
@@ -531,12 +474,10 @@ if __name__ == "__main__":
             train_progress_bar.update(epoch)
                 
         print 'finished training.'
-        # save vocab file
-        lm.vocab.save(vocab_path)
-    
+
         # save best dev model parameters and predictions
         accuracy, dev_results = get_accuracy_predictions(ti, dev_data)
-        write_results_file(lm.hyperparams, accuracy, train_path, dev_path, output_file_path, dev_results)
+        write_results_file(dict(model_hyperparams.items()+train_hyperparams.items()), accuracy, train_path, dev_path, output_file_path, dev_results)
 
     elif arguments['test']:
         print '=========EVALUATION ONLY:========='
@@ -547,7 +488,7 @@ if __name__ == "__main__":
         test_path = check_path(arguments['--test_path'], '--test_path')
         data_set = SoftDataSet
         test_data = data_set.from_file(test_path)
-        print 'Test data has {} examples'.format(len(test_data))
+        print 'Test data has {} examples'.format(test_data.length)
 
         print 'Checking if any special symbols in data...'
         data = set([c for w in test_data for c in w])
@@ -556,7 +497,8 @@ if __name__ == "__main__":
         print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
-        vocab_path = model_folder + '/vocab.txt'
+#        vocab_path = model_folder + '/vocab.txt'
+        vocab_path = check_path(arguments['--vocab_path'], 'vocab_path', is_data_path=False)
         output_file_path = model_folder + '/best.test'
         
         model_hyperparams = {'INPUT_DIM': int(arguments['--input']),
@@ -575,4 +517,4 @@ if __name__ == "__main__":
         accuracy, test_results = get_accuracy_predictions(ti, test_data)
         print 'accuracy: {}'.format(accuracy)
 
-        write_results_file(hyperparams, accuracy, train_path, test_path, output_file_path, test_results)
+        write_results_file(model_hyperparams, accuracy, best_model_path, test_path, output_file_path, test_results)

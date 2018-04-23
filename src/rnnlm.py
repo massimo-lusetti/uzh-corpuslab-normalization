@@ -4,11 +4,11 @@
 
 Usage:
   rnnlm.py train [--dynet-seed SEED] [--dynet-mem MEM]
-  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments]
+  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH]
   [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
   MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   rnnlm.py test [--dynet-seed SEED] [--dynet-mem MEM]
-  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments]
+  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH]
   MODEL_FOLDER --test_path=TEST_FILE
   
 Arguments:
@@ -30,6 +30,7 @@ Options:
   --dev_path=DEV_FILE           dev set path, possibly relative to DATA_FOLDER, only for training
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --segments                    run LM over segments instead of chars
+  --vocab_path=VOCAB_PATH       vocab set path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
 """
 
 from __future__ import division
@@ -48,44 +49,19 @@ import numpy as np
 import os
 from itertools import izip
 
-
-# Default paths
-SRC_FOLDER = os.path.dirname(__file__)
-RESULTS_FOLDER = os.path.join(SRC_FOLDER, '../results')
-DATA_FOLDER = os.path.join(SRC_FOLDER, '../data/')
-
+from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, BOUNDARY_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path
+from vocab_builder import build_vocabulary, Vocab
 
 
 # Model defaults
-BOUNDARY_CHAR = u' '
-BEGIN_CHAR   = u'<s>'
-STOP_CHAR   = u'</s>'
-UNK_CHAR = '<unk>'
 MAX_PRED_SEQ_LEN = 50
-OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001,
+OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #common
                                                    beta_1=0.9, beta_2=0.999, eps=1e-8),
-            'SGD'     : dy.SimpleSGDTrainer,
-            'ADADELTA': dy.AdadeltaTrainer}
+    'SGD'     : dy.SimpleSGDTrainer,
+        'ADADELTA': dy.AdadeltaTrainer}
 
 
 ### IO handling and evaluation
-
-def check_path(path, arg_name, is_data_path=True):
-    if not os.path.exists(path):
-        prefix = DATA_FOLDER if is_data_path else RESULTS_FOLDER
-        tmp = os.path.join(prefix, path)
-        if os.path.exists(tmp):
-            path = tmp
-        else:
-            if is_data_path:
-                print '%s incorrect: %s and %s' % (arg_name, path, tmp)
-                raise ValueError
-            else: #results path
-                os.makedirs(tmp)
-                path = tmp
-    return path
-
-
 
 def log_to_file(log_file_name, e, train_perplexity, dev_perplexity):
     # if first write, add headers
@@ -94,39 +70,6 @@ def log_to_file(log_file_name, e, train_perplexity, dev_perplexity):
     
     with open(log_file_name, "a") as logfile:
         logfile.write("{}\t{}\t{}\n".format(e, train_perplexity, dev_perplexity))
-
-
-# represents a bidirectional mapping from strings to ints
-class Vocab(object):
-    def __init__(self, w2i):
-        self.w2i = dict(w2i)
-        self.i2w = {i:w for w,i in w2i.iteritems()}
-    
-    def save(self, vocab_path):
-        with codecs.open(vocab_path, 'w', 'utf-8') as fh:
-            for w,i in self.w2i.iteritems():
-                fh.write(u'{}\t{}\n'.format(w,i))
-        return
-    
-    @classmethod
-    def from_list(cls, words):
-        w2i = {}
-        idx = 0
-        for word in words:
-            w2i[word] = idx
-            idx += 1
-        return Vocab(w2i)
-    
-    @classmethod
-    def from_file(cls, vocab_fname):
-        w2i = {}
-        with codecs.open(vocab_fname, 'r', 'utf-8') as fh:
-            for line in fh:
-                word, idx = line.strip().split()
-                w2i[word] = int(idx)
-        return Vocab(w2i)
-
-    def size(self): return len(self.w2i.keys())
 
 def read(filename, over_segs=False):
     """
@@ -164,21 +107,12 @@ def write_results_file(hyper_params, perplexity, train_path, test_path, output_f
 
 
 class RNNLanguageModel(object):
-    def __init__(self, model, model_hyperparams, train_data=None):
+    def __init__(self, model, model_hyperparams):#, train_data=None):
         
         self.hyperparams = model_hyperparams
         
-        if train_data:
-            # Build vocabulary from the train data
-            self.build_vocabulary(train_data)
-        else:
-            # Load vocabulary of pretrained model
-            if os.path.exists(self.hyperparams['VOCAB_PATH']):
-                self.vocab = Vocab.from_file(self.hyperparams['VOCAB_PATH'])
-            else:
-                print 'No vocabulary path'
-                raise ValueError
-
+        print 'Loading vocabulary from {}:'.format(self.hyperparams['VOCAB_PATH'])
+        self.vocab = Vocab.from_file(self.hyperparams['VOCAB_PATH'])
         #self.BEGIN   = self.vocab.w2i[BEGIN_CHAR]
         #self.STOP   = self.vocab.w2i[STOP_CHAR]
         self.UNK       = self.vocab.w2i[UNK_CHAR]
@@ -191,13 +125,7 @@ class RNNLanguageModel(object):
             print '{:20} = {}'.format(k, v)
         print
         
-    def build_vocabulary(self, train_data):
-        
-        # Build vocabulary over items - chars or segments
-        items = list(set([c for w in train_data for c in w])) + [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
-        print 'Example of vocabulary items:' + u', '.join(items[:10])
-        self.vocab = Vocab.from_list(items)
-    
+
     def build_model(self, model):
         
         # LSTM
@@ -279,10 +207,15 @@ if __name__ == "__main__":
                 assert c not in data
             print '{} data does not contain special symbols'.format(name)
         print
-    
+        
+        vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
+        if not os.path.exists(vocab_path):
+            print 'Building vocabulary..'
+            build_vocabulary(train_data, vocab_path)
+
         log_file_name   = model_folder + '/log.txt'
         best_model_path  = model_folder + '/bestmodel.txt'
-        vocab_path = model_folder + '/vocab.txt'
+#        vocab_path = model_folder + '/vocab.txt'
         output_file_path = model_folder + '/best.dev'
         
         # Model hypoparameters
@@ -295,7 +228,7 @@ if __name__ == "__main__":
     
         print 'Building model...'
         model = dy.Model()
-        lm = RNNLanguageModel(model, model_hyperparams, train_data)
+        lm = RNNLanguageModel(model, model_hyperparams)
 
         # Training hypoparameters
         train_hyperparams = {'MAX_PRED_SEQ_LEN': MAX_PRED_SEQ_LEN,
@@ -391,11 +324,9 @@ if __name__ == "__main__":
             train_progress_bar.update(epoch)
     
         print 'finished training.'
-        # save vocab file
-        lm.vocab.save(vocab_path)
-        
+
         # save best dev model parameters
-        write_results_file(lm.hyperparams, best_dev_perplexity, train_path, dev_path, output_file_path)
+        write_results_file(dict(model_hyperparams.items()+train_hyperparams.items()), best_dev_perplexity, train_path, dev_path, output_file_path)
 
     elif arguments['test']:
         print '=========EVALUATION ONLY:========='
@@ -415,7 +346,7 @@ if __name__ == "__main__":
         print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
-        vocab_path = model_folder + '/vocab.txt'
+        vocab_path = check_path(arguments['--vocab_path'], 'vocab_path', is_data_path=False)
         output_file_path = model_folder + '/best.test'
 
         model_hyperparams = {'INPUT_DIM': int(arguments['--input']),
@@ -440,4 +371,4 @@ if __name__ == "__main__":
         perplexity = np.exp(dev_loss/dev_units)
         print 'Perplexity: {}'.format(perplexity)
 
-        write_results_file(lm.hyperparams, perplexity, best_model_path, test_path, output_file_path)
+        write_results_file(model_hyperparams, perplexity, best_model_path, test_path, output_file_path)
