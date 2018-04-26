@@ -41,8 +41,7 @@ class Vocab(object):
     
     def size(self): return len(self.w2i.keys())
 
-def build_vocabulary(train_data, vocab_path):
-    
+def build_vocabulary(train_data, vocab_path):    
     # Build vocabulary over items - chars or segments - and save it to 'vocab_path'
     items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
     # to make sure that special symbols have the same index across models

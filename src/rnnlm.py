@@ -7,9 +7,8 @@ Usage:
   [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH]
   [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
   MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
-  rnnlm.py test [--dynet-seed SEED] [--dynet-mem MEM]
-  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH]
-  MODEL_FOLDER --test_path=TEST_FILE
+  rnnlm.py test [--dynet-mem MEM]
+  MODEL_FOLDER --test_path=TEST_FILE [--segments]
   
 Arguments:
   MODEL_FOLDER  save/read model folder where also eval results are written to, possibly relative to RESULTS_FOLDER
@@ -139,7 +138,7 @@ class RNNLanguageModel(object):
         dy.save(best_model_path, [self.RNN, self.VOCAB_LOOKUP, self.R, self.bias])
 
     def BuildLMGraph(self, input):
-        dy.renew_cg()
+#        dy.renew_cg()
         R = dy.parameter(self.R)   # hidden to vocabulary
         bias = dy.parameter(self.bias)
         s = self.RNN.initial_state()
@@ -217,7 +216,6 @@ if __name__ == "__main__":
 
         log_file_name   = model_folder + '/log.txt'
         best_model_path  = model_folder + '/bestmodel.txt'
-#        vocab_path = model_folder + '/vocab.txt'
         output_file_path = model_folder + '/best.dev'
         
         # Model hypoparameters
@@ -268,7 +266,7 @@ if __name__ == "__main__":
             
             for i, input in enumerate(train_data, 1):
                 # comp graph for each training example
-#                dy.renew_cg()
+                dy.renew_cg()
                 loss = lm.BuildLMGraph(input)
                 train_loss += loss.scalar_value()
                 loss_processed += loss.scalar_value()
@@ -292,6 +290,7 @@ if __name__ == "__main__":
             # get dev accuracy
             print 'evaluating on dev...'
             then = time.time()
+            dy.renew_cg() # new graph for all the examples
             avg_dev_loss, dev_perplexity = lm.evaluate(dev_data)
 
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
@@ -320,16 +319,6 @@ if __name__ == "__main__":
     
         print 'finished training.'
         
-#        dy.renew_cg()
-        print 'Evaluating on dev..'
-        _, perplexity = lm.evaluate(dev_data)
-        print 'Perplexity: {}'.format(perplexity)
-        
-        print 'Evaluating on dev..'
-        lm = RNNLanguageModel(pc, model_hyperparams, best_model_path)
-        _, perplexity = lm.evaluate(dev_data)
-        print 'Perplexity: {}'.format(perplexity)
-
         # save best dev model parameters
         write_param_file(output_file_path, dict(model_hyperparams.items()+train_hyperparams.items()))
         write_eval_file(output_file_path, best_dev_perplexity, dev_path, 'Perplexity')
@@ -352,14 +341,16 @@ if __name__ == "__main__":
         print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
-        vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
         output_file_path = model_folder + '/best.test'
+        hypoparams_file = model_folder + '/best.dev'
 
-        model_hyperparams = {'INPUT_DIM': int(arguments['--input']),
-                            'HIDDEN_DIM': int(arguments['--hidden']),
-                            #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
-                            'LAYERS': int(arguments['--layers']),
-                            'VOCAB_PATH': vocab_path}
+        hypoparams_file_reader = codecs.open(hypoparams_file, 'r', 'utf-8')
+        hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
+        model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
+                            'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
+                            #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                            'LAYERS': int(hyperparams_dict['LAYERS']),
+                            'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
         
         pc = dy.ParameterCollection()
         lm = RNNLanguageModel(pc, model_hyperparams, best_model_path)

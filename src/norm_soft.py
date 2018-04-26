@@ -7,8 +7,7 @@ Usage:
     [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
-  norm_soft.py test [--dynet-seed SEED] [--dynet-mem MEM]
-    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
+  norm_soft.py test [--dynet-mem MEM]
     MODEL_FOLDER --test_path=TEST_FILE
 
 Arguments:
@@ -29,7 +28,7 @@ Options:
   --train_path=TRAIN_FILE       train set path, possibly relative to DATA_FOLDER, only for training
   --dev_path=DEV_FILE           dev set path, possibly relative to DATA_FOLDER, only for training
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
-  --vocab_path=VOCAB_PATH       vocab set path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
+  --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
 """
 
 from __future__ import division
@@ -47,7 +46,7 @@ import dynet as dy
 import numpy as np
 import os
 
-from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path
+from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path, write_pred_file, write_param_file, write_eval_file
 from vocab_builder import build_vocabulary, Vocab
 
 MAX_PRED_SEQ_LEN = 50 # option
@@ -83,40 +82,6 @@ def load_data(filename):
     tup = (inputs, outputs)
     print 'found', len(outputs), 'examples'
     return tup
-
-def get_accuracy_predictions(ti, test_data):
-    correct = 0.
-    final_results = []
-    for input,output in test_data.iter():
-        loss, prediction = ti.transduce(input)
-        if prediction == output:
-            correct += 1
-        final_results.append((input,prediction))  # pred expected as list
-    accuracy = correct / test_data.length
-    return accuracy, final_results
-
-def write_results_file(hyper_params, accuracy, train_path, test_path, output_file_path, final_results):
-    
-    # write hyperparams, micro + macro avg. accuracy
-    with codecs.open(output_file_path, 'w', encoding='utf8') as f:
-        f.write('train/model path = ' + str(train_path) + '\n')
-        f.write('test path = ' + str(test_path) + '\n')
-        
-        for param in hyper_params:
-            f.write(param + ' = ' + str(hyper_params[param]) + '\n')
-        
-        f.write('Prediction Accuracy = ' + str(accuracy) + '\n')
-    
-    
-    predictions_path = output_file_path + '.predictions'
-    
-    print 'len of predictions is {}'.format(len(final_results))
-    with codecs.open(predictions_path, 'w', encoding='utf8') as predictions:
-        for input, prediction in final_results:
-            predictions.write(u'{0}\t{1}\n'.format(input, prediction))
-
-    print 'wrote results to: ' + output_file_path + '\n' + output_file_path + '.evaluation' + '\n' + predictions_path
-    return
 
 def log_to_file(log_file_name, e, avg_train_loss, train_accuracy, dev_accuracy):
     # if first write, add headers
@@ -155,7 +120,7 @@ class SoftDataSet(object):
         return cls(inputs, outputs, *args, **kwargs)
 
 class SoftAttention(object):
-    def __init__(self, model, model_hyperparams):#, train_data=None):
+    def __init__(self, pc, model_hyperparams, best_model_path=None):
         
         self.hyperparams = model_hyperparams
         
@@ -166,44 +131,47 @@ class SoftAttention(object):
         self.UNK       = self.vocab.w2i[UNK_CHAR]
         self.hyperparams['VOCAB_SIZE'] = self.vocab.size()
         
-        self.build_model(model)
+        self.build_model(pc, best_model_path)
         
         print 'Model Hypoparameters:'
         for k, v in self.hyperparams.items():
             print '{:20} = {}'.format(k, v)
         print
         
-    def build_model(self, model):
+    def build_model(self, pc, best_model_path):
         
-        # BiLSTM for input
-        self.fbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], model)
-        self.bbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], model)
-        
-        # embedding lookups for vocabulary
-        self.VOCAB_LOOKUP  = model.add_lookup_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['INPUT_DIM']))
+        if best_model_path:
+            print 'Loading model from: {}'.format(best_model_path)
+            self.fbuffRNN, self.bbuffRNN, self.VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a = dy.load(best_model_path, pc)
+        else:
+            # BiLSTM for input
+            self.fbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], pc)
+            self.bbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], pc)
+            
+            # embedding lookups for vocabulary
+            self.VOCAB_LOOKUP  = pc.add_lookup_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['INPUT_DIM']))
 
-        # decoder LSTM
-        self.decoder = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], model)
+            # decoder LSTM
+            self.decoder = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], pc)
 
-        # softmax parameters
-        self.R = model.add_parameters((self.hyperparams['VOCAB_SIZE'], 3 * self.hyperparams['HIDDEN_DIM']))
-        self.bias = model.add_parameters(self.hyperparams['VOCAB_SIZE'])
-        
-        # attention MLPs - Loung-style with extra v_a from Bahdanau
-        
-        # concatenation layer for h (hidden dim), c (2 * hidden_dim)
-        self.W_c = model.add_parameters((3 * self.hyperparams['HIDDEN_DIM'], 3 * self.hyperparams['HIDDEN_DIM']))
-        
-        # attention MLP's - Bahdanau-style
-        # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
-        self.W__a = model.add_parameters((self.hyperparams['HIDDEN_DIM'], self.hyperparams['HIDDEN_DIM']))
-        
-        # concatenation layer for h (hidden dim), c (2 * hidden_dim)
-        self.U__a = model.add_parameters((self.hyperparams['HIDDEN_DIM'], 2 * self.hyperparams['HIDDEN_DIM']))
-        
-        # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
-        self.v__a = model.add_parameters((1, self.hyperparams['HIDDEN_DIM']))
-        
+            # softmax parameters
+            self.R = pc.add_parameters((self.hyperparams['VOCAB_SIZE'], 3 * self.hyperparams['HIDDEN_DIM']))
+            self.bias = pc.add_parameters(self.hyperparams['VOCAB_SIZE'])
+            
+            # attention MLPs - Loung-style with extra v_a from Bahdanau
+            
+            # concatenation layer for h (hidden dim), c (2 * hidden_dim)
+            self.W_c = pc.add_parameters((3 * self.hyperparams['HIDDEN_DIM'], 3 * self.hyperparams['HIDDEN_DIM']))
+            
+            # attention MLP's - Bahdanau-style
+            # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
+            self.W__a = pc.add_parameters((self.hyperparams['HIDDEN_DIM'], self.hyperparams['HIDDEN_DIM']))
+            
+            # concatenation layer for h (hidden dim), c (2 * hidden_dim)
+            self.U__a = pc.add_parameters((self.hyperparams['HIDDEN_DIM'], 2 * self.hyperparams['HIDDEN_DIM']))
+            
+            # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
+            self.v__a = pc.add_parameters((1, self.hyperparams['HIDDEN_DIM']))
         
         
         print 'Model dimensions:'
@@ -215,7 +183,10 @@ class SoftAttention(object):
         print
         print ' * SOFTMAX: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['HIDDEN_DIM'], self.hyperparams['VOCAB_SIZE'])
         print
-    
+
+    def save_model(self, best_model_path):
+        dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a])
+
 
     def bilstm_transduce(self, encoder_frnn, encoder_rrnn, input_char_vecs):
         
@@ -312,6 +283,21 @@ class SoftAttention(object):
         output = u''.join(output)
         return ((dy.average(losses) if losses else None), output)
 
+    def evaluate(self, data):
+        # data is a list of tuples (an instance of SoftDataSet with iter method applied)
+        total_loss = 0.
+        correct = 0.
+        final_results = []
+        for input,output in data:
+            loss, prediction = self.transduce(input)
+            total_loss += loss.scalar_value()
+            if prediction == output:
+                correct += 1
+            final_results.append((input,prediction))  # pred expected as list
+        avg_loss = total_loss/len(data)
+        accuracy = correct / len(data)
+        return accuracy, final_results, avg_loss
+
 if __name__ == "__main__":
     arguments = docopt(__doc__)
     print arguments
@@ -361,26 +347,29 @@ if __name__ == "__main__":
                             'HIDDEN_DIM': int(arguments['--hidden']),
                             #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
                             'LAYERS': int(arguments['--layers']),
-                            'DROPOUT': float(arguments['--dropout']),
                             'VOCAB_PATH': vocab_path}
     
         print 'Building model...'
-        model = dy.Model()
-        ti = SoftAttention(model, model_hyperparams)
+        pc = dy.ParameterCollection()
+        ti = SoftAttention(pc, model_hyperparams)
 
         # Training hypoparameters
         train_hyperparams = {'MAX_PRED_SEQ_LEN': MAX_PRED_SEQ_LEN,
                             'OPTIMIZATION': arguments['--optimization'],
                             'EPOCHS': int(arguments['--epochs']),
                             'PATIENCE': int(arguments['--patience']),
-                            'BEAM_WIDTH': 1}
+                            'DROPOUT': float(arguments['--dropout']),
+                            'BEAM_WIDTH': 1,
+                            'TRAIN_PATH': train_path,
+                            'DEV_PATH': dev_path}
+
         print 'Train Hypoparameters:'
         for k, v in train_hyperparams.items():
             print '{:20} = {}'.format(k, v)
         print
         
         trainer = OPTIMIZERS[train_hyperparams['OPTIMIZATION']]
-        trainer = trainer(model)
+        trainer = trainer(pc)
 
         best_dev_accuracy = -1.
         sanity_set_size = 100 # for speed - check prediction accuracy on train set
@@ -414,43 +403,20 @@ if __name__ == "__main__":
             # get train accuracy
             print 'evaluating on train...'
             then = time.time()
-            train_correct = 0.
-            for i, (input, output) in enumerate(train_data.iter(indices=sanity_set_size)):
-                _, prediction = ti.transduce(input)
-                if prediction == output:
-                    train_correct += 1
-            train_accuracy = train_correct / sanity_set_size
+            train_accuracy, _, _ = ti.evaluate(train_data.iter(indices=sanity_set_size))
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
             
-            # condition for displaying stuff like true outputs and predictions
-            check_condition = (epoch > 0 and (epoch % 5 == 0 or epoch == epochs - 1))
-
             # get dev accuracy
             print 'evaluating on dev...'
             then = time.time()
-            dev_correct = 0.
-            dev_loss = 0.
-            for input, output in dev_data.iter():
-                loss, prediction = ti.transduce(input)
-                if prediction == output:
-                    dev_correct += 1
-                    tick = 'V'
-                else:
-                    tick = 'X'
-                if check_condition:
-                    print 'TRUE:    ', output
-                    print 'PRED:    ', prediction
-                    print tick
-                    print
-                dev_loss += loss.scalar_value()
-            dev_accuracy = dev_correct / dev_data.length
-            avg_dev_loss = dev_loss / dev_data.length
+            dy.renew_cg() # new graph for all the examples
+            dev_accuracy, _, avg_dev_loss = ti.evaluate(dev_data.iter())
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
 
             if dev_accuracy > best_dev_accuracy:
                 best_dev_accuracy = dev_accuracy
                 # save best model
-                model.save(best_model_path)
+                ti.save_model(best_model_path)
                 print 'saved new best model to {}'.format(best_model_path)
                 patience = 0
             else:
@@ -474,10 +440,12 @@ if __name__ == "__main__":
             train_progress_bar.update(epoch)
                 
         print 'finished training.'
-
-        # save best dev model parameters and predictions
-        accuracy, dev_results = get_accuracy_predictions(ti, dev_data)
-        write_results_file(dict(model_hyperparams.items()+train_hyperparams.items()), accuracy, train_path, dev_path, output_file_path, dev_results)
+        
+        dev_accuracy, dev_results, _ = ti.evaluate(dev_data.iter())
+        print 'Best dev accuracy: {}'.format(dev_accuracy)
+        write_param_file(output_file_path, dict(model_hyperparams.items()+train_hyperparams.items()))
+        write_pred_file(output_file_path, dev_results)
+        write_eval_file(output_file_path, best_dev_accuracy, dev_path)
 
     elif arguments['test']:
         print '=========EVALUATION ONLY:========='
@@ -491,30 +459,29 @@ if __name__ == "__main__":
         print 'Test data has {} examples'.format(test_data.length)
 
         print 'Checking if any special symbols in data...'
-        data = set([c for w in test_data for c in w])
+        data = set(test_data.inputs + test_data.outputs)
         for c in [BEGIN_CHAR, STOP_CHAR, UNK_CHAR]:
             assert c not in data
         print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
-#        vocab_path = model_folder + '/vocab.txt'
-        vocab_path = check_path(arguments['--vocab_path'], 'vocab_path', is_data_path=False)
         output_file_path = model_folder + '/best.test'
+        hypoparams_file = model_folder + '/best.dev'
         
-        model_hyperparams = {'INPUT_DIM': int(arguments['--input']),
-                            'HIDDEN_DIM': int(arguments['--hidden']),
-                            #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
-                            'LAYERS': int(arguments['--layers']),
-                            'DROPOUT': float(arguments['--dropout']),
-                            'VOCAB_PATH': vocab_path}
+        hypoparams_file_reader = codecs.open(hypoparams_file, 'r', 'utf-8')
+        hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
+        model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
+                            'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
+                            #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                            'LAYERS': int(hyperparams_dict['LAYERS']),
+                            'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
 
-        model = dy.Model()
-        ti = SoftAttention(model, model_hyperparams)
+        pc = dy.ParameterCollection()
+        ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
-        print 'trying to load model from: {}'.format(best_model_path)
-        model.populate(best_model_path)
-
-        accuracy, test_results = get_accuracy_predictions(ti, test_data)
+        print 'Evaluating on test..'
+        accuracy, test_results, _ = ti.evaluate(test_data.iter())
         print 'accuracy: {}'.format(accuracy)
+        write_pred_file(output_file_path, test_results)
+        write_eval_file(output_file_path, accuracy, test_path)
 
-        write_results_file(model_hyperparams, accuracy, best_model_path, test_path, output_file_path, test_results)
