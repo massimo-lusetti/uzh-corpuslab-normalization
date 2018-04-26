@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*
 
 import os
+import codecs
+
 # Default paths
 SRC_FOLDER = os.path.dirname(__file__)
 RESULTS_FOLDER = os.path.join(SRC_FOLDER, '../results')
 DATA_FOLDER = os.path.join(SRC_FOLDER, '../data/')
-
 
 
 # Model defaults
@@ -33,3 +34,29 @@ def check_path(path, arg_name, is_data_path=True): #common
                 path = tmp
     return path
 
+def write_pred_file(output_file_path, final_results):
+    
+    predictions_path = output_file_path + '.predictions'
+    
+    print 'len of predictions is {}'.format(len(final_results))
+    with codecs.open(predictions_path, 'w', encoding='utf8') as predictions:
+        for input, prediction in final_results:
+            predictions.write(u'{0}\t{1}\n'.format(input, prediction))
+
+    return
+
+def write_param_file(output_file_path, hyper_params):
+    
+    with codecs.open(output_file_path, 'w', encoding='utf8') as f:
+        for param in hyper_params:
+            f.write(param + ' = ' + str(hyper_params[param]) + '\n')
+    
+    return
+
+def write_eval_file(output_file_path, result, test_file_path, measure='Prediction Accuracy'):
+    
+    f = codecs.open(output_file_path + '.eval', 'w', encoding='utf8')
+    f.write('File path = ' + str(test_file_path) + '\n')
+    f.write('{} = {}\n'.format(measure, result))
+    
+    return

@@ -30,7 +30,7 @@ Options:
   --dev_path=DEV_FILE           dev set path, possibly relative to DATA_FOLDER, only for training
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --segments                    run LM over segments instead of chars
-  --vocab_path=VOCAB_PATH       vocab set path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
+  --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
 """
 
 from __future__ import division
@@ -49,7 +49,7 @@ import numpy as np
 import os
 from itertools import izip
 
-from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, BOUNDARY_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path
+from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, BOUNDARY_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path, write_pred_file, write_param_file, write_eval_file
 from vocab_builder import build_vocabulary, Vocab
 
 
@@ -89,25 +89,8 @@ def read(filename, over_segs=False):
                 # Chars
                 yield [c for c in output]
 
-def write_results_file(hyper_params, perplexity, train_path, test_path, output_file_path):
-    
-    # write hyperparams, micro + macro avg. accuracy
-    with codecs.open(output_file_path, 'w', encoding='utf8') as f:
-        f.write('train/model path = ' + str(train_path) + '\n')
-        f.write('test path = ' + str(test_path) + '\n')
-        
-        for param in hyper_params:
-            f.write(param + ' = ' + str(hyper_params[param]) + '\n')
-        
-        f.write('Perplexity = ' + str(perplexity) + '\n')
-
-    print 'wrote results to: ' + output_file_path + '\n'
-    return
-
-
-
 class RNNLanguageModel(object):
-    def __init__(self, model, model_hyperparams):#, train_data=None):
+    def __init__(self, pc, model_hyperparams, best_model_path=None):
         
         self.hyperparams = model_hyperparams
         
@@ -118,7 +101,7 @@ class RNNLanguageModel(object):
         self.UNK       = self.vocab.w2i[UNK_CHAR]
         self.hyperparams['VOCAB_SIZE'] = self.vocab.size()
         
-        self.build_model(model)
+        self.build_model(pc, best_model_path)
             
         print 'Model Hypoparameters:'
         for k, v in self.hyperparams.items():
@@ -126,17 +109,21 @@ class RNNLanguageModel(object):
         print
         
 
-    def build_model(self, model):
+    def build_model(self, pc, best_model_path):
         
-        # LSTM
-        self.RNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], model)
-        
-        # embedding lookups for vocabulary
-        self.VOCAB_LOOKUP  = model.add_lookup_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['INPUT_DIM']))
+        if best_model_path:
+            print 'Loading model from: {}'.format(best_model_path)
+            self.RNN, self.VOCAB_LOOKUP, self.R, self.bias = dy.load(best_model_path, pc)
+        else:
+            # LSTM
+            self.RNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], pc)
+            
+            # embedding lookups for vocabulary
+            self.VOCAB_LOOKUP  = pc.add_lookup_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['INPUT_DIM']))
 
-        # softmax parameters
-        self.R = model.add_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['HIDDEN_DIM']))
-        self.bias = model.add_parameters(self.hyperparams['VOCAB_SIZE'])
+            # softmax parameters
+            self.R = pc.add_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['HIDDEN_DIM']))
+            self.bias = pc.add_parameters(self.hyperparams['VOCAB_SIZE'])
         
         
         print 'Model dimensions:'
@@ -148,8 +135,11 @@ class RNNLanguageModel(object):
         print ' * SOFTMAX: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['HIDDEN_DIM'], self.hyperparams['VOCAB_SIZE'])
         print
     
+    def save_model(self, best_model_path):
+        dy.save(best_model_path, [self.RNN, self.VOCAB_LOOKUP, self.R, self.bias])
+
     def BuildLMGraph(self, input):
-    
+        dy.renew_cg()
         R = dy.parameter(self.R)   # hidden to vocabulary
         bias = dy.parameter(self.bias)
         s = self.RNN.initial_state()
@@ -174,6 +164,18 @@ class RNNLanguageModel(object):
 #            s = s.add_input(self.VOCAB_LOOKUP[wid])
 
         return dy.esum(losses)
+
+    def evaluate(self, data):
+    # dev_data: a list of inputs where input is a list of units (chars/words)
+        total_loss = 0.
+        units_count = 0
+        for input in data:
+            loss = self.BuildLMGraph(input)
+            total_loss += loss.scalar_value()
+            units_count += len(input) + 2
+        avg_loss = total_loss/len(data)
+        perplexity = np.exp(total_loss/units_count)
+        return avg_loss, perplexity
 
 if __name__ == "__main__":
     arguments = docopt(__doc__)
@@ -223,26 +225,28 @@ if __name__ == "__main__":
                             'HIDDEN_DIM': int(arguments['--hidden']),
                             #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
                             'LAYERS': int(arguments['--layers']),
-                            'DROPOUT': float(arguments['--dropout']),
                             'VOCAB_PATH': vocab_path}
     
         print 'Building model...'
-        model = dy.Model()
-        lm = RNNLanguageModel(model, model_hyperparams)
+        pc = dy.ParameterCollection()
+        lm = RNNLanguageModel(pc, model_hyperparams)
 
         # Training hypoparameters
         train_hyperparams = {'MAX_PRED_SEQ_LEN': MAX_PRED_SEQ_LEN,
                             'OPTIMIZATION': arguments['--optimization'],
                             'EPOCHS': int(arguments['--epochs']),
                             'PATIENCE': int(arguments['--patience']),
-                            'BEAM_WIDTH': 1}
+                            'DROPOUT': float(arguments['--dropout']),
+                            'BEAM_WIDTH': 1,
+                            'TRAIN_PATH': train_path,
+                            'DEV_PATH': dev_path}
         print 'Train Hypoparameters:'
         for k, v in train_hyperparams.items():
             print '{:20} = {}'.format(k, v)
         print
 
         trainer = OPTIMIZERS[train_hyperparams['OPTIMIZATION']]
-        trainer = trainer(model)
+        trainer = trainer(pc)
 
         best_dev_perplexity = 999.
 #        patience = 0
@@ -264,7 +268,7 @@ if __name__ == "__main__":
             
             for i, input in enumerate(train_data, 1):
                 # comp graph for each training example
-                dy.renew_cg()
+#                dy.renew_cg()
                 loss = lm.BuildLMGraph(input)
                 train_loss += loss.scalar_value()
                 loss_processed += loss.scalar_value()
@@ -288,23 +292,14 @@ if __name__ == "__main__":
             # get dev accuracy
             print 'evaluating on dev...'
             then = time.time()
+            avg_dev_loss, dev_perplexity = lm.evaluate(dev_data)
 
-            dev_loss = 0.
-            dev_units = 0
-            for input in dev_data:
-                loss = lm.BuildLMGraph(input)
-                dev_loss += loss.scalar_value()
-                dev_units += len(input) + 2
-            
-            avg_dev_loss = dev_loss/len(dev_data)
-            dev_perplexity = np.exp(dev_loss/dev_units)
-            
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
 
             if dev_perplexity < best_dev_perplexity:
                 best_dev_perplexity = dev_perplexity
                 # save best model
-                model.save(best_model_path)
+                lm.save_model(best_model_path)
                 print 'saved new best model to {}'.format(best_model_path)
 #                patience = 0
 #            else:
@@ -324,9 +319,20 @@ if __name__ == "__main__":
             train_progress_bar.update(epoch)
     
         print 'finished training.'
+        
+#        dy.renew_cg()
+        print 'Evaluating on dev..'
+        _, perplexity = lm.evaluate(dev_data)
+        print 'Perplexity: {}'.format(perplexity)
+        
+        print 'Evaluating on dev..'
+        lm = RNNLanguageModel(pc, model_hyperparams, best_model_path)
+        _, perplexity = lm.evaluate(dev_data)
+        print 'Perplexity: {}'.format(perplexity)
 
         # save best dev model parameters
-        write_results_file(dict(model_hyperparams.items()+train_hyperparams.items()), best_dev_perplexity, train_path, dev_path, output_file_path)
+        write_param_file(output_file_path, dict(model_hyperparams.items()+train_hyperparams.items()))
+        write_eval_file(output_file_path, best_dev_perplexity, dev_path, 'Perplexity')
 
     elif arguments['test']:
         print '=========EVALUATION ONLY:========='
@@ -346,29 +352,20 @@ if __name__ == "__main__":
         print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
-        vocab_path = check_path(arguments['--vocab_path'], 'vocab_path', is_data_path=False)
+        vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
         output_file_path = model_folder + '/best.test'
 
         model_hyperparams = {'INPUT_DIM': int(arguments['--input']),
                             'HIDDEN_DIM': int(arguments['--hidden']),
                             #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
                             'LAYERS': int(arguments['--layers']),
-                            'DROPOUT': float(arguments['--dropout']),
                             'VOCAB_PATH': vocab_path}
         
-        model = dy.Model()
-        lm = RNNLanguageModel(model, model_hyperparams)
+        pc = dy.ParameterCollection()
+        lm = RNNLanguageModel(pc, model_hyperparams, best_model_path)
 
-        print 'trying to load model from: {}'.format(best_model_path)
-        model.populate(best_model_path)
-
-        dev_loss = 0.
-        dev_units = 0
-        for input in test_data:
-            loss = lm.BuildLMGraph(input)
-            dev_loss += loss.scalar_value()
-            dev_units += len(input) + 2
-        perplexity = np.exp(dev_loss/dev_units)
+        print 'Evaluating ont test..'
+        _, perplexity = lm.evaluate(test_data)
         print 'Perplexity: {}'.format(perplexity)
 
-        write_results_file(model_hyperparams, perplexity, best_model_path, test_path, output_file_path)
+        write_eval_file(output_file_path, perplexity, test_path, 'Perplexity')
