@@ -3,15 +3,19 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM]
+  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--segformat]
     [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
-  norm_soft.py test [--dynet-mem MEM]
+  norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--segformat]
     MODEL_FOLDER --test_path=TEST_FILE
+  norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--segformat]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE
+    
 
 Arguments:
 MODEL_FOLDER  save/read model folder where also eval results are written to, possibly relative to RESULTS_FOLDER
+ED_MODEL_FOLDER  ED model(s) folder, possibly relative to RESULTS_FOLDER, coma-separated
 
 Options:
   -h --help                     show this help message and exit
@@ -29,6 +33,9 @@ Options:
   --dev_path=DEV_FILE           dev set path, possibly relative to DATA_FOLDER, only for training
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
+  --beam=BEAM                   beam width [default: 1]
+  --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
+  --segformat                   format of the segmentation input file (3 cols)
 """
 
 from __future__ import division
@@ -41,7 +48,8 @@ import progressbar
 import time
 from collections import Counter, defaultdict
 
-
+import time
+import copy
 import dynet as dy
 import numpy as np
 import os
@@ -58,7 +66,7 @@ OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #co
 
 ### IO handling and evaluation
 
-def load_data(filename):
+def load_data(filename, three_col_format=False):
     """ Load data from file
         
         filename (str):   file containing input/output data, structure (tab-separated):
@@ -72,12 +80,19 @@ def load_data(filename):
     inputs, outputs = [], []
     
     with codecs.open(filename, encoding='utf8') as f:
-        for line in f:
-            splt = line.strip().split('\t')
-            assert len(splt) == 2, 'bad line: ' + line.encode('utf8') + '\n'
-            input, output = splt #can be adapted to the task with features
-            inputs.append(input)
-            outputs.append(output)
+        if not three_col_format:
+            for line in f:
+                splt = line.strip().split('\t')
+                assert len(splt) == 2, 'bad line: ' + line.encode('utf8') + '\n'
+                input, output = splt #can be adapted to the task with features
+                inputs.append(input)
+                outputs.append(output)
+        else:
+            for line in f:
+                splt = line.strip().split('\t')
+                assert len(splt) == 3, 'bad line: ' + line.encode('utf8') + '\n'
+                inputs.append(splt[0])
+                outputs.append(splt[2])
 
     tup = (inputs, outputs)
     print 'found', len(outputs), 'examples'
@@ -114,9 +129,9 @@ class SoftDataSet(object):
         return zipped
     
     @classmethod
-    def from_file(cls, path, *args, **kwargs):
+    def from_file(cls, path, three_col_format, *args, **kwargs):
         # returns a `SoftDataSet` with fields: inputs, outputs
-        inputs, outputs = load_data(path)
+        inputs, outputs = load_data(path, three_col_format)
         return cls(inputs, outputs, *args, **kwargs)
 
 class SoftAttention(object):
@@ -247,7 +262,6 @@ class SoftAttention(object):
         output = []
         pred_history = [self.BEGIN] # <
         s = self.decoder.initial_state()
-#        s=s0
         
         while not len(pred_history) == MAX_PRED_SEQ_LEN:
             # compute probability over vocabulary and choose a prediction
@@ -283,20 +297,418 @@ class SoftAttention(object):
         output = u''.join(output)
         return ((dy.average(losses) if losses else None), output)
 
-    def evaluate(self, data):
+
+    def evaluate(self, data, beam):
         # data is a list of tuples (an instance of SoftDataSet with iter method applied)
-        total_loss = 0.
         correct = 0.
         final_results = []
-        for input,output in data:
-            loss, prediction = self.transduce(input)
-            total_loss += loss.scalar_value()
+        for i,(input,output) in enumerate(data):
+            predictions = self.predict(input, beam)
+            prediction = predictions[0][1]
+#            print i, input, predictions
             if prediction == output:
                 correct += 1
+            else:
+                print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+                print predictions
             final_results.append((input,prediction))  # pred expected as list
-        avg_loss = total_loss/len(data)
         accuracy = correct / len(data)
-        return accuracy, final_results, avg_loss
+        return accuracy, final_results
+
+
+    def param_init(self, input): #initialize parameters for current cg with the current input
+    
+        R = dy.parameter(self.R)   # from parameters to expressions
+        bias = dy.parameter(self.bias)
+        W_c = dy.parameter(self.W_c)
+        W__a = dy.parameter(self.W__a)
+        U__a = dy.parameter(self.U__a)
+        v__a = dy.parameter(self.v__a)
+        
+        self.cg_params = (R, bias, W_c, W__a, U__a, v__a) # params for current cg and input
+    
+        # biLSTM encoder of input string
+        input = [BEGIN_CHAR] + [c for c in input] + [STOP_CHAR]
+        
+        input_emb = []
+        for char_ in reversed(input):
+            char_id = self.vocab.w2i.get(char_, self.UNK)
+            char_embedding = self.VOCAB_LOOKUP[char_id]
+            input_emb.append(char_embedding)
+        self.biencoder = self.bilstm_transduce(self.fbuffRNN, self.bbuffRNN, input_emb)
+    
+#        losses = []
+#        output = []
+#        pred_history = [self.BEGIN] # <
+        self.s = self.decoder.initial_state()
+        self.s = self.s.add_input(self.VOCAB_LOOKUP[self.BEGIN])
+
+    def predict_next(self, scores=False, hidden =False):
+        (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
+
+        # soft attention vector
+        att_scores = [v__a * dy.tanh(W__a * self.s.output() + U__a * h_input) for h_input in self.biencoder]
+        alphas = dy.softmax(dy.concatenate(att_scores))
+        c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder)])
+            
+        # softmax over vocabulary
+        h_output = dy.tanh(W_c * dy.concatenate([self.s.output(), c]))
+        if not hidden:
+            if not scores:
+                return dy.softmax(R * h_output + bias)
+            else:
+                return R * h_output + bias
+        else:
+            return h_output
+
+    def predict_next_(self, state, scores=False, hidden=False):
+        (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
+        
+        # soft attention vector
+        att_scores = [v__a * dy.tanh(W__a * state.output() + U__a * h_input) for h_input in self.biencoder]
+        alphas = dy.softmax(dy.concatenate(att_scores))
+        c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder)])
+        
+        # softmax over vocabulary
+        h_output = dy.tanh(W_c * dy.concatenate([state.output(), c]))
+        if not hidden:
+            if not scores:
+    #            print 'probs:'
+                return dy.softmax(R * h_output + bias)
+            else:
+    #            print 'scores:'
+                return R * h_output + bias
+        else:
+            return h_output
+
+    def consume_next(self, pred_id):
+        self.s = self.s.add_input(self.VOCAB_LOOKUP[pred_id])
+    
+    def consume_next_(self, state, pred_id):
+        new_state = state.add_input(self.VOCAB_LOOKUP[pred_id])
+        return new_state
+
+    def train(self, input, _true_output):
+
+        true_output = [self.vocab.w2i[a] for a in _true_output]
+        true_output += [self.STOP]
+
+        self.param_init(input)
+
+        losses = []
+#        pred_id = self.BEGIN
+#        while not (output == MAX_PRED_SEQ_LEN or pred_id==self.STOP):
+        for pred_id in true_output:
+            probs = self.predict_next()
+            losses.append(-dy.log(dy.pick(probs, pred_id)))
+            self.consume_next(pred_id)
+        return dy.average(losses)
+
+    def predict_greedy(self, input):
+        self.param_init(input)
+        output = []
+        while not len(output) == MAX_PRED_SEQ_LEN:
+            probs = self.predict_next()
+            pred_id = np.argmax(probs.npvalue())
+            if pred_id == self.STOP:
+                break
+            else:
+                pred_char = self.vocab.i2w.get(pred_id,UNK_CHAR)
+                output.append(pred_char)
+                self.consume_next(pred_id)
+        output = u''.join(output)
+        return output
+    
+    # This method is correct but not optimized
+    def predict_old(self, input, beam = 1):
+        self.param_init(input)
+        output = []
+        hypos = [(self.s, 0., [])]
+#        (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
+        complete_hypotheses = []
+        pred_length = 0
+
+        while pred_length <= MAX_PRED_SEQ_LEN and len(hypos) > 0:
+            expansion = []
+            for s, log_p, word in hypos:
+                # soft attention vector
+#                probs = self.predict_next_(s)
+#                log_probs_expr = dy.log(probs)
+                log_probs_expr = dy.log_softmax(self.predict_next_(s, scores=True))
+                log_probs = log_probs_expr.npvalue()
+                top = np.argsort(log_probs)[-beam:]
+#                print 'expansions ' + u', '.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in top])
+                expansion.extend(( (s, log_p + log_probs[pred_id], copy.copy(word), pred_id) for pred_id in top ))
+
+            hypos = []
+            expansion.sort(key=lambda e: e[1])
+            for e in expansion[-beam:]:
+                s, log_p, word, pred_id = e
+                if pred_id == self.STOP:
+                    complete_hypotheses.append((log_p,word))
+#                    complete_hypotheses.append((log_p,u''.join(word)))
+#                    print u'complete hypo: {}'.format(u''.join(word))
+                else:
+#                    word.append(self.vocab.i2w.get(pred_id,UNK_CHAR))
+                    word.append(pred_id)
+                    hypos.append((self.consume_next_(s,pred_id), log_p, word))
+#            print 'hypos :'
+#            print u', '.join([u''.join(word) for s, log_p, word in hypos])
+            pred_length += 1
+                
+        if not complete_hypotheses:
+        # nothing found because the model is so crappy
+            complete_hypotheses = [(log_p,u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])) for s, log_p, word in hypos]
+
+        complete_hypotheses.sort(key=lambda h: h[0], reverse=True)
+        final_hypos = []
+        for log_p, word in complete_hypotheses[:beam]:
+            final_hypos.append((log_p, u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])))
+#        print complete_hypotheses
+#        print complete_hypotheses[:beam]
+        return final_hypos
+
+    @staticmethod
+    def _smallest(matrix, k, only_first_row=False):
+        """Find k smallest elements of a matrix.
+            Parameters
+            ----------
+            matrix : :class:`np.ndarray`
+            The matrix.
+            k : int
+            The number of smallest elements required.
+            Returns
+            -------
+            Tuple of ((row numbers, column numbers), values).
+            """
+        #flatten = matrix.flatten()
+        if only_first_row:
+            flatten = matrix[:1, :].flatten()
+        else:
+            flatten = matrix.flatten()
+        args = np.argpartition(flatten, k)[:k]
+        args = args[np.argsort(flatten[args])]
+        return np.unravel_index(args, matrix.shape), flatten[args]
+
+    def predict(self, input, beam_size, ignore_first_eol=False, as_arrays=False):
+        """Performs beam search.
+            If the beam search was not compiled, it also compiles it.
+            Parameters
+            ----------
+            max_length : int
+            Maximum sequence length, the search stops when it is reached.
+            ignore_first_eol : bool, optional
+            When ``True``, the end if sequence symbol generated at the
+            first iteration are ignored. This useful when the sequence
+            generator was trained on data with identical symbols for
+            sequence start and sequence end.
+            as_arrays : bool, optional
+            If ``True``, the internal representation of search results
+            is returned, that is a (matrix of outputs, mask,
+            costs of all generated outputs) tuple.
+            Returns
+            -------
+            outputs : list of lists of ints
+            A list of the `beam_size` best sequences found in the order
+            of decreasing likelihood.
+            costs : list of floats
+            A list of the costs for the `outputs`, where cost is the
+            negative log-likelihood.
+            """
+        
+        
+        self.param_init(input)
+        states = [self.s] * beam_size
+        # This array will store all generated outputs, including those from
+        # previous step and those from already finished sequences.
+        all_outputs = np.full(shape=(1,beam_size),fill_value=self.BEGIN,dtype = int)
+        all_masks = np.ones_like(all_outputs, dtype=float) # whether predicted symbol is self.STOP
+        all_costs = np.zeros_like(all_outputs, dtype=float) # the cumulative cost of predictions
+        
+        for i in range(MAX_PRED_SEQ_LEN):
+            if all_masks[-1].sum() == 0:
+                break
+        
+            # We carefully hack values of the `logprobs` array to ensure
+            # that all finished sequences are continued with `eos_symbol`.
+            logprobs = np.array([-dy.log_softmax(self.predict_next_(s, scores=True)).npvalue() for s in states])
+#            print logprobs
+#            print all_masks[-1, :, None]
+            next_costs = (all_costs[-1, :, None] + logprobs * all_masks[-1, :, None]) #take last row of cumul prev costs and turn into beam_size X 1 matrix, take logprobs distributions for unfinished hypos only and add it (elem-wise) with the array of prev costs; result: beam_size x vocab_len matrix of next costs
+            (finished,) = np.where(all_masks[-1] == 0) # finished hypos have all their cost on the self.STOP symbol
+            next_costs[finished, :self.STOP] = np.inf
+            next_costs[finished, self.STOP + 1:] = np.inf
+            
+            # indexes - the hypos from prev step to keep, outputs - the next step prediction, chosen cost - cost of predicted symbol
+            (indexes, outputs), chosen_costs = self._smallest(next_costs, beam_size, only_first_row=i == 0)
+#            print outputs
+            # Rearrange everything
+            new_states = (states[ind] for ind in indexes)
+            all_outputs = all_outputs[:, indexes]
+            all_masks = all_masks[:, indexes]
+            all_costs = all_costs[:, indexes]
+            
+            # Record chosen output and compute new states
+            states = [self.consume_next_(s,pred_id) for s,pred_id in zip(new_states, outputs)]
+            all_outputs = np.vstack([all_outputs, outputs[None, :]])
+            all_costs = np.vstack([all_costs, chosen_costs[None, :]])
+            mask = outputs != self.STOP
+            if ignore_first_eol: #and i == 0:
+                mask[:] = 1
+            all_masks = np.vstack([all_masks, mask[None, :]])
+
+        all_outputs = all_outputs[1:] # skipping first row of self.BEGIN
+        all_masks = all_masks[1:-1] #? all_masks[:-1] # skipping first row of self.BEGIN and the last row of self.STOP
+        all_costs = all_costs[1:] - all_costs[:-1] #turn cumulative cost ito cost of each step #?actually the last row would suffice for us?
+        result = all_outputs, all_masks, all_costs
+        if as_arrays:
+            return result
+        return self.result_to_lists(self.vocab,result)
+    
+    @staticmethod
+    def result_to_lists(vocab, result):
+        outputs, masks, costs = [array.T for array in result]
+        outputs = [list(output[:int(mask.sum())]) for output, mask in zip(outputs, masks)]
+        words = [u''.join([vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in output]) for output in outputs]
+        costs = list(costs.T.sum(axis=0))
+        results = zip(costs, words)
+        results.sort(key=lambda h: h[0])
+        return results
+
+def evaluate_ensemble(nmt_models, data, beam):
+    # data is a list of tuples (an instance of SoftDataSet with iter method applied)
+    correct = 0.
+    final_results = []
+    for i,(input,output) in enumerate(data):
+        predictions = predict_ensemble(nmt_models, input, beam)
+        prediction = predictions[0][1]
+        #            print i, input, predictions
+        if prediction == output:
+            correct += 1
+#        else:
+#            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+#            print predictions
+        final_results.append((input,prediction))  # pred expected as list
+    accuracy = correct / len(data)
+    return accuracy, final_results
+
+
+def predict_ensemble(nmt_models, input, beam_size, ignore_first_eol=False, as_arrays=False):
+    """Performs beam search for ensemble of models.
+    If the beam search was not compiled, it also compiles it.
+    Parameters
+    ----------
+    max_length : int
+    Maximum sequence length, the search stops when it is reached.
+    ignore_first_eol : bool, optional
+    When ``True``, the end if sequence symbol generated at the
+    first iteration are ignored. This useful when the sequence
+    generator was trained on data with identical symbols for
+    sequence start and sequence end.
+    as_arrays : bool, optional
+    If ``True``, the internal representation of search results
+    is returned, that is a (matrix of outputs, mask,
+    costs of all generated outputs) tuple.
+    Returns
+    -------
+    outputs : list of lists of ints
+    A list of the `beam_size` best sequences found in the order
+    of decreasing likelihood.
+    costs : list of floats
+    A list of the costs for the `outputs`, where cost is the
+    negative log-likelihood.
+    """
+    nmt_vocab = nmt_models[0].vocab # same vocab file for all nmt_models!!
+    BEGIN   = nmt_vocab.w2i[BEGIN_CHAR]
+    STOP   = nmt_vocab.w2i[STOP_CHAR]
+    
+    for m in nmt_models:
+        m.param_init(input)
+    states = [[m.s] * beam_size for m in nmt_models] # ensemble x beam matrix of states
+    # This array will store all generated outputs, including those from
+    # previous step and those from already finished sequences.
+    all_outputs = np.full(shape=(1,beam_size),fill_value=BEGIN,dtype = int)
+    all_masks = np.ones_like(all_outputs, dtype=float) # whether predicted symbol is self.STOP
+    all_costs = np.zeros_like(all_outputs, dtype=float) # the cumulative cost of predictions
+
+    for i in range(MAX_PRED_SEQ_LEN):
+        if all_masks[-1].sum() == 0:
+            break
+
+        # We carefully hack values of the `logprobs` array to ensure
+        # that all finished sequences are continued with `eos_symbol`.
+        logprobs_lst = []
+        for j,m in enumerate(nmt_models):
+            logprobs_m = np.array([-dy.log_softmax(m.predict_next_(s, scores=True)).npvalue() for s in states[j]]) # beam_size x vocab_len matrix
+        #            print logprobs
+        #            print all_masks[-1, :, None]
+            next_costs = (all_costs[-1, :, None] + logprobs_m * all_masks[-1, :, None]) #take last row of cumul prev costs and turn into beam_size X 1 matrix, take logprobs distributions for unfinished hypos only and add it (elem-wise) with the array of prev costs; result: beam_size x vocab_len matrix of next costs
+            (finished,) = np.where(all_masks[-1] == 0) # finished hypos have all their cost on the self.STOP symbol
+            next_costs[finished, :STOP] = np.inf
+            next_costs[finished, STOP + 1:] = np.inf
+#            print next_costs
+            (indexes, outputs), chosen_costs = SoftAttention._smallest(next_costs, beam_size, only_first_row=i == 0)
+#            print j
+#            print ','.join(nmt_vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in outputs)
+#            print chosen_costs
+#            print indexes
+#            print logprobs_m[indexes]
+            logprobs_lst.append(logprobs_m)
+
+#        logprobs_lst = np.array([[-dy.log_softmax(m.predict_next_(s, scores=True)).npvalue() for s in m_states] for m,m_states in zip(nmt_models,states)])
+#        print logprobs_lst
+#        print np.array(logprobs_lst).shape
+        logprobs = np.sum(logprobs_lst, axis=0)
+#        print logprobs.shape
+#        print all_costs[-1, :, None]
+#        print logprobs
+#        print all_masks[-1, :, None]
+        next_costs = (all_costs[-1, :, None] + logprobs * all_masks[-1, :, None]) #take last row of cumul prev costs and turn into beam_size X 1 matrix, take logprobs distributions for unfinished hypos only and add it (elem-wise) with the array of prev costs; result: beam_size x vocab_len matrix of next costs
+        (finished,) = np.where(all_masks[-1] == 0) # finished hypos have all their cost on the self.STOP symbol
+        next_costs[finished, :STOP] = np.inf
+        next_costs[finished, STOP + 1:] = np.inf
+
+        # indexes - the hypos from prev step to keep, outputs - the next step prediction, chosen cost - cost of predicted symbol
+        (indexes, outputs), chosen_costs = SoftAttention._smallest(next_costs, beam_size, only_first_row=i == 0)
+#        print 'ensemble:'
+#        print ','.join(nmt_vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in outputs)
+#        print chosen_costs
+#        print indexes
+        # Rearrange everything
+        new_states=[]
+        for j,m in enumerate(nmt_models):
+            new_states.append([states[j][ind] for ind in indexes])
+
+#        new_states = ((states_m[ind] for ind in indexes) for states_m in states)
+        all_outputs = all_outputs[:, indexes]
+        all_masks = all_masks[:, indexes]
+        all_costs = all_costs[:, indexes]
+
+        # Record chosen output and compute new states
+        states = [[m.consume_next_(s,pred_id) for s,pred_id in zip(m_new_states, outputs)] for m,m_new_states in zip(nmt_models, new_states)]
+        all_outputs = np.vstack([all_outputs, outputs[None, :]])
+        all_costs = np.vstack([all_costs, chosen_costs[None, :]])
+        mask = outputs != STOP
+#        if ignore_first_eol: # and i == 0:
+#            mask[:] = 1
+        all_masks = np.vstack([all_masks, mask[None, :]])
+
+    all_outputs = all_outputs[1:] # skipping first row of self.BEGIN
+    all_masks = all_masks[1:-1] #? all_masks[:-1] # skipping first row of self.BEGIN and the last row of self.STOP
+    all_costs = all_costs[1:] - all_costs[:-1] #turn cumulative cost ito cost of each step #?actually the last row would suffice for us?
+    result = all_outputs, all_masks, all_costs
+    if as_arrays:
+        return result
+    return result_to_lists(nmt_vocab, result)
+
+def result_to_lists(nmt_vocab, result):
+    outputs, masks, costs = [array.T for array in result]
+    outputs = [list(output[:int(mask.sum())]) for output, mask in zip(outputs, masks)]
+    words = [u''.join([nmt_vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in output]) for output in outputs]
+    costs = list(costs.T.sum(axis=0))
+    results = zip(costs, words)
+    results.sort(key=lambda h: h[0])
+    return results
 
 if __name__ == "__main__":
     arguments = docopt(__doc__)
@@ -317,10 +729,11 @@ if __name__ == "__main__":
         print 'Loading data...'
         data_set = SoftDataSet
         train_path = check_path(arguments['--train_path'], 'train_path')
-        train_data = data_set.from_file(train_path)
+        three_col_format = True if arguments['--segformat'] else False
+        train_data = data_set.from_file(train_path,three_col_format)
         print 'Train data has {} examples'.format(train_data.length)
         dev_path = check_path(arguments['--dev_path'], 'dev_path')
-        dev_data = data_set.from_file(dev_path)
+        dev_data = data_set.from_file(dev_path,three_col_format)
         print 'Dev data has {} examples'.format(dev_data.length)
     
         print 'Checking if any special symbols in data...'
@@ -331,11 +744,23 @@ if __name__ == "__main__":
             print '{} data does not contain special symbols'.format(name)
         print
         
-        vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
-        if not os.path.exists(vocab_path):
-            print 'Building vocabulary..'
-            data = set(train_data.inputs + train_data.outputs)
-            build_vocabulary(data, vocab_path)
+        if os.path.exists(arguments['--vocab_path']):
+            vocab_path = arguments['--vocab_path'] # absolute path  to existing vocab file
+        else:
+            tmp = os.path.join(RESULTS_FOLDER, arguments['--vocab_path'])
+            if os.path.exists(tmp): # relative path to existing vocab file
+                vocab_path = tmp
+            else:
+                vocab_path = os.path.join(model_folder,arguments['--vocab_path']) # no vocab - use default name
+                print 'Building vocabulary..'
+                data = set(train_data.inputs + train_data.outputs)
+                build_vocabulary(data, vocab_path)
+
+#        if not os.path.exists(arguments['--vocab_path']):
+#            vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
+#            print 'Building vocabulary..'
+#            data = set(train_data.inputs + train_data.outputs)
+#            build_vocabulary(data, vocab_path)
 
         # Paths for checks and results
         log_file_name   = model_folder + '/log.txt'
@@ -390,11 +815,12 @@ if __name__ == "__main__":
             for i, (input, output) in enumerate(train_data.iter(shuffle=True)):
                 # here we do training
                 dy.renew_cg()
-                loss, _ = ti.transduce(input, output)
-                if loss is not None:
-                    train_loss += loss.scalar_value()
-                    loss.backward()
-                    trainer.update()
+#                loss, _ = ti.transduce(input, output)
+                loss = ti.train(input, output)
+#                if loss is not None:
+                train_loss += loss.scalar_value()
+                loss.backward()
+                trainer.update()
 
             avg_train_loss = train_loss / train_data.length
 
@@ -402,15 +828,16 @@ if __name__ == "__main__":
 
             # get train accuracy
             print 'evaluating on train...'
+            dy.renew_cg() # new graph for all the examples
             then = time.time()
-            train_accuracy, _, _ = ti.evaluate(train_data.iter(indices=sanity_set_size))
+            train_accuracy, _ = ti.evaluate(train_data.iter(indices=sanity_set_size), int(arguments['--beam']))
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
             
             # get dev accuracy
             print 'evaluating on dev...'
             then = time.time()
             dy.renew_cg() # new graph for all the examples
-            dev_accuracy, _, avg_dev_loss = ti.evaluate(dev_data.iter())
+            dev_accuracy, _ = ti.evaluate(dev_data.iter(), int(arguments['--beam']))
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
 
             if dev_accuracy > best_dev_accuracy:
@@ -427,8 +854,8 @@ if __name__ == "__main__":
                 train_progress_bar.finish()
                 break
 
-            print ('epoch: {0} train loss: {1:.4f} dev loss: {2:.4f} dev accuracy: {3:.4f} '
-                   'train accuracy: {4:.4f} best dev accuracy: {5:.4f} patience = {6}').format(epoch, avg_train_loss, avg_dev_loss, dev_accuracy, train_accuracy, best_dev_accuracy, patience)
+            print ('epoch: {0} train loss: {1:.4f} dev accuracy: {2:.4f} '
+                   'train accuracy: {3:.4f} best dev accuracy: {4:.4f} patience = {5}').format(epoch, avg_train_loss, dev_accuracy, train_accuracy, best_dev_accuracy, patience)
 
             log_to_file(log_file_name, epoch, avg_train_loss, train_accuracy, dev_accuracy)
 
@@ -441,7 +868,8 @@ if __name__ == "__main__":
                 
         print 'finished training.'
         
-        dev_accuracy, dev_results, _ = ti.evaluate(dev_data.iter())
+        ti = SoftAttention(pc, model_hyperparams, best_model_path)
+        dev_accuracy, dev_results = ti.evaluate(dev_data.iter(), int(arguments['--beam']))
         print 'Best dev accuracy: {}'.format(dev_accuracy)
         write_param_file(output_file_path, dict(model_hyperparams.items()+train_hyperparams.items()))
         write_pred_file(output_file_path, dev_results)
@@ -455,7 +883,8 @@ if __name__ == "__main__":
         print 'Loading data...'
         test_path = check_path(arguments['--test_path'], '--test_path')
         data_set = SoftDataSet
-        test_data = data_set.from_file(test_path)
+        three_col_format = True if arguments['--segformat'] else False
+        test_data = data_set.from_file(test_path,three_col_format)
         print 'Test data has {} examples'.format(test_data.length)
 
         print 'Checking if any special symbols in data...'
@@ -465,7 +894,7 @@ if __name__ == "__main__":
         print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
-        output_file_path = model_folder + '/best.test'
+        output_file_path = os.path.join(model_folder,arguments['--pred_path'])
         hypoparams_file = model_folder + '/best.dev'
         
         hypoparams_file_reader = codecs.open(hypoparams_file, 'r', 'utf-8')
@@ -480,7 +909,58 @@ if __name__ == "__main__":
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
         print 'Evaluating on test..'
-        accuracy, test_results, _ = ti.evaluate(test_data.iter())
+        t = time.clock()
+        accuracy, test_results = ti.evaluate(test_data.iter(), int(arguments['--beam']))
+        print 'Time: {}'.format(time.clock()-t)
+        print 'accuracy: {}'.format(accuracy)
+        write_pred_file(output_file_path, test_results)
+        write_eval_file(output_file_path, accuracy, test_path)
+
+    elif arguments['ensemble_test']:
+        print '=========EVALUATION ONLY:========='
+        # requires test path, model path of pretrained path and results path where to write the results to
+        assert arguments['--test_path']!=None
+        
+        print 'Loading data...'
+        test_path = check_path(arguments['--test_path'], '--test_path')
+        data_set = SoftDataSet
+        three_col_format = True if arguments['--segformat'] else False
+        test_data = data_set.from_file(test_path,three_col_format)
+        print 'Test data has {} examples'.format(test_data.length)
+        
+        print 'Checking if any special symbols in data...'
+        data = set(test_data.inputs + test_data.outputs)
+        for c in [BEGIN_CHAR, STOP_CHAR, UNK_CHAR]:
+            assert c not in data
+        print 'Test data does not contain special symbols'
+
+        pc = dy.ParameterCollection()
+        ed_models= []
+        ed_model_params = []
+        for i,path in enumerate(arguments['ED_MODEL_FOLDER'].split(',')):
+            print '...Loading nmt model {}'.format(i)
+            ed_model_folder =  check_path(path, 'ED_MODEL_FOLDER_{}'.format(i), is_data_path=False)
+            best_model_path  = ed_model_folder + '/bestmodel.txt'
+            hypoparams_file_reader = codecs.open(ed_model_folder + '/best.dev', 'r', 'utf-8')
+            hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
+            model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
+                'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
+                    #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                    'LAYERS': int(hyperparams_dict['LAYERS']),
+                        'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
+            ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
+            ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
+            
+            ed_models.append(ed_model)
+            best_model_path  = model_folder + '/ed_bestmodel_{}.txt'.format(i)
+
+        ensemble_number = len(ed_models)
+        output_file_path = os.path.join(model_folder,arguments['--pred_path'])
+
+        print 'Evaluating on test..'
+        t = time.clock()
+        accuracy, test_results = evaluate_ensemble(ed_models, test_data.iter(), int(arguments['--beam']))
+        print 'Time: {}'.format(time.clock()-t)
         print 'accuracy: {}'.format(accuracy)
         write_pred_file(output_file_path, test_results)
         write_eval_file(output_file_path, accuracy, test_path)
