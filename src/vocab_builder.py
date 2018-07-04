@@ -3,6 +3,7 @@
 
 from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR
 import codecs
+import collections
 
 # represents a bidirectional mapping from strings to ints
 class Vocab(object):
@@ -41,9 +42,20 @@ class Vocab(object):
     
     def size(self): return len(self.w2i.keys())
 
-def build_vocabulary(train_data, vocab_path):    
+def build_vocabulary(train_data, vocab_path, vocab_trunk=0):
     # Build vocabulary over items - chars or segments - and save it to 'vocab_path'
-    items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
+    
+    if vocab_trunk==0:
+        items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
+    else:
+        tokens = [c for w in train_data for c in w]
+        counter = collections.Counter(tokens)
+        print u'Word types in train set: {}'.format(len(counter))
+        n = len(counter) - int(len(counter)*vocab_trunk)
+        print u'Trunkating: {}'.format(n)
+        items = [w for w,c in counter.most_common(n)]
+
+
     # to make sure that special symbols have the same index across models
     w2i = {}
     w2i[BEGIN_CHAR] = 0

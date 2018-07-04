@@ -303,6 +303,7 @@ class SoftAttention(object):
         correct = 0.
         final_results = []
         for i,(input,output) in enumerate(data):
+            dy.renew_cg()
             predictions = self.predict(input, beam)
             prediction = predictions[0][1]
 #            print i, input, predictions
@@ -580,6 +581,7 @@ def evaluate_ensemble(nmt_models, data, beam):
     correct = 0.
     final_results = []
     for i,(input,output) in enumerate(data):
+        dy.renew_cg()
         predictions = predict_ensemble(nmt_models, input, beam)
         prediction = predictions[0][1]
         #            print i, input, predictions

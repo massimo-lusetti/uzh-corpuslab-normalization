@@ -3,11 +3,11 @@
 """Trains LSTM language model.
 
 Usage:
-  rnnlm.py train [--dynet-seed SEED] [--dynet-mem MEM]
+  rnnlm.py train [--dynet-seed SEED] [--dynet-mem MEM] [--segformat] [--dictformat]
   [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH]
   [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
   MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
-  rnnlm.py test [--dynet-mem MEM]
+  rnnlm.py test [--dynet-mem MEM] [--segformat] [--dictformat]
   MODEL_FOLDER --test_path=TEST_FILE [--segments]
   
 Arguments:
@@ -30,6 +30,8 @@ Options:
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --segments                    run LM over segments instead of chars
   --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
+  --segformat                   format of the segmentation input file (3 cols)
+  --dictformat                   format of the dictionary (1 col)
 """
 
 from __future__ import division
@@ -41,6 +43,7 @@ import random
 import progressbar
 import time
 from collections import Counter, defaultdict
+import copy
 
 
 import dynet as dy
@@ -70,23 +73,46 @@ def log_to_file(log_file_name, e, train_perplexity, dev_perplexity):
     with open(log_file_name, "a") as logfile:
         logfile.write("{}\t{}\t{}\n".format(e, train_perplexity, dev_perplexity))
 
-def read(filename, over_segs=False):
+def read(filename, col_format=2, over_segs=False):
     """
         Read a file where each line is of the form "word1 word2 ..."
         Yields lists of the lines from file
         """
     with codecs.open(filename, encoding='utf8') as fh:
-        for line in fh:
-            splt = line.strip().split('\t')
-            assert len(splt) == 2, 'bad line: ' + line.encode('utf8') + '\n'
-            input, output = splt
-            # language model is trained on the target side of the corpus
-            if over_segs:
-                # Segments
-                yield output.split(BOUNDARY_CHAR)
-            else:
-                # Chars
-                yield [c for c in output]
+        if col_format==2:
+            for line in fh:
+                splt = line.strip().split('\t')
+                assert len(splt) == 2, 'bad line: ' + line.encode('utf8') + '\n'
+                input, output = splt
+                # language model is trained on the target side of the corpus
+                if over_segs:
+                    # Segments
+                    yield output.split(BOUNDARY_CHAR)
+                else:
+                    # Chars
+                    yield [c for c in output]
+        elif col_format==3:
+            for line in fh:
+                splt = line.strip().split('\t')
+                assert len(splt) == 3, 'bad line: ' + line.encode('utf8') + '\n'
+                #language model is trained on the target side of the corpus
+                if over_segs:
+                    # Segments
+                    yield splt[2].split(BOUNDARY_CHAR)
+                else:
+                    # Chars
+                    yield [c for c in splt[2]]
+        else:
+            for line in fh:
+                l = line.strip()
+                #language model is trained on the target side of the corpus
+                if over_segs:
+                    # Segments
+                    yield l.split(BOUNDARY_CHAR)
+                else:
+                    # Chars
+                    yield [c for c in l]
+
 
 class RNNLanguageModel(object):
     def __init__(self, pc, model_hyperparams, best_model_path=None):
@@ -95,12 +121,13 @@ class RNNLanguageModel(object):
         
         print 'Loading vocabulary from {}:'.format(self.hyperparams['VOCAB_PATH'])
         self.vocab = Vocab.from_file(self.hyperparams['VOCAB_PATH'])
-        #self.BEGIN   = self.vocab.w2i[BEGIN_CHAR]
-        #self.STOP   = self.vocab.w2i[STOP_CHAR]
+        self.BEGIN   = self.vocab.w2i[BEGIN_CHAR]
+        self.STOP   = self.vocab.w2i[STOP_CHAR]
         self.UNK       = self.vocab.w2i[UNK_CHAR]
         self.hyperparams['VOCAB_SIZE'] = self.vocab.size()
         
         self.build_model(pc, best_model_path)
+        
             
         print 'Model Hypoparameters:'
         for k, v in self.hyperparams.items():
@@ -139,7 +166,7 @@ class RNNLanguageModel(object):
 
     def BuildLMGraph(self, input):
 #        dy.renew_cg()
-        R = dy.parameter(self.R)   # hidden to vocabulary
+        R = dy.parameter(self.R)   # from parameters to expressions
         bias = dy.parameter(self.bias)
         s = self.RNN.initial_state()
         
@@ -151,8 +178,10 @@ class RNNLanguageModel(object):
         true_preds = inputs_id[1:]
         
         states = s.transduce(inputs)
+#        print [s_t.npvalue()[:3] for s_t in states]
         prob_ts = (bias + (R * s_t) for s_t in states)
         losses = [dy.pickneglogsoftmax(prob_t,true_pred) for prob_t, true_pred in izip(prob_ts, true_preds)]
+#        print [loss.npvalue()[:3] for loss in losses]
 
 #        losses = []
 #        s = s.add_input(self.VOCAB_LOOKUP[inputs_id[0]])
@@ -171,10 +200,112 @@ class RNNLanguageModel(object):
         for input in data:
             loss = self.BuildLMGraph(input)
             total_loss += loss.scalar_value()
-            units_count += len(input) + 2
+            units_count += len(input) + 1
         avg_loss = total_loss/len(data)
         perplexity = np.exp(total_loss/units_count)
         return avg_loss, perplexity
+
+    def param_init(self):
+        R = dy.parameter(self.R)   # from parameters to expressions
+        bias = dy.parameter(self.bias)
+        self.cg_params = (R, bias)
+        
+        self.s = self.RNN.initial_state()
+        self.s = self.s.add_input(self.VOCAB_LOOKUP[self.BEGIN])
+
+    def predict_next(self, scores=False, states = False):
+        (R, bias) = self.cg_params
+        if states:
+            return self.s.output()
+        else:
+            next_scores = bias + (R * self.s.output())
+            if not scores:
+                return dy.softmax(next_scores)
+            else:
+                #                print 'next scores: {}'.format(next_scores.npvalue())
+                return next_scores
+
+    def predict_next_(self, state, scores=False, states = False):
+        (R, bias) = self.cg_params
+        if states:
+            return state.output()
+        else:
+            next_scores = bias + (R * self.s.output())
+            if not scores:
+                return dy.softmax(next_scores)
+            else:
+                return next_scores
+
+    def consume_next(self, next_id):
+        self.s = self.s.add_input(self.VOCAB_LOOKUP[next_id])
+
+    def consume_next_(self, state, next_id):
+        new_state = state.add_input(self.VOCAB_LOOKUP[next_id])
+        return new_state
+
+    def train(self, input):
+        self.param_init()
+        input = [BEGIN_CHAR] + input + [STOP_CHAR]
+        inputs_id = [self.vocab.w2i.get(c, self.UNK) for c in input]
+        losses = []
+        for next_id in inputs_id[1:]:
+#            print self.vocab.i2w[next_id]
+#            print self.s.output().npvalue()[:3]
+#            probs = self.predict_next()
+#            print probs.npvalue()[:3]
+#            losses.append(-dy.log(dy.pick(probs, next_id)))
+            scores = self.predict_next(scores=True)
+            losses.append(dy.pickneglogsoftmax(scores, next_id))
+#            print -dy.log(dy.pick(probs, next_id)).npvalue()
+#            print dy.pickneglogsoftmax(scores, next_id).npvalue()
+            self.consume_next(next_id)
+#            print self.s.output().npvalue()[:3]
+        return dy.esum(losses)
+
+    def score3(self, segm_id, scores = False, eof = False):
+        (R, bias) = self.cg_params
+        if not eof:
+            scores_seg = bias + (R * self.s.output())
+            if not scores:
+                probs = dy.softmax(scores_seg)
+                return probs[segm_id]
+            else:
+                return scores_seg[segm_id]
+        else:
+            s_temp = self.s
+            #            print 'segm id: {}'.format(segm_id)
+            #s_temp.add_input(self.VOCAB_LOOKUP[segm_id])
+            #scores_eof = bias + (R * s_temp.output())
+            s = s_temp.transduce([self.VOCAB_LOOKUP[segm_id]])
+            scores_eof = bias + (R * s[-1])
+            if not scores:
+                probs_eof = dy.softmax(scores_eof)
+                return probs_eof[self.STOP]
+            else:
+                #                print 'eof scores: {}'.format(scores_eof.npvalue())
+                return scores_eof[self.STOP]
+
+    def score3_(self, state, segm_id, scores = False, eof = False):
+        (R, bias) = self.cg_params
+        scores_seg = bias + (R * state.output())
+        if not eof:
+            if not scores:
+                probs = dy.softmax(scores_seg)
+                return probs[segm_id]
+            else:
+                return scores_seg[segm_id]
+        else:
+            s_temp = state
+            #            s_temp.add_input(self.VOCAB_LOOKUP[segm_id])
+            #            scores_eof = bias + (R * s_temp.output())
+            s = s_temp.transduce([self.VOCAB_LOOKUP[segm_id]])
+            scores_eof = bias + (R * s[-1])
+            if not scores:
+                probs_eof = dy.softmax(scores_eof)
+                return probs_eof[self.STOP]
+            else:
+                return scores_eof[self.STOP]
+
 
 if __name__ == "__main__":
     arguments = docopt(__doc__)
@@ -195,10 +326,16 @@ if __name__ == "__main__":
         print 'Loading data...'
         over_segs = arguments['--segments']
         train_path = check_path(arguments['--train_path'], 'train_path')
-        train_data = list(read(train_path, over_segs))
+        if arguments['--segformat']:
+            col_format=3
+        elif  arguments['--dictformat']:
+            col_format=1
+        else:
+            col_format=2
+        train_data = list(read(train_path, col_format, over_segs))
         print 'Train data has {} examples'.format(len(train_data))
         dev_path = check_path(arguments['--dev_path'], 'dev_path')
-        dev_data = list(read(dev_path, over_segs))
+        dev_data = list(read(dev_path, col_format, over_segs))
         print 'Dev data has {} examples'.format(len(dev_data))
         
         print 'Checking if any special symbols in data...'
@@ -223,7 +360,8 @@ if __name__ == "__main__":
                             'HIDDEN_DIM': int(arguments['--hidden']),
                             #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
                             'LAYERS': int(arguments['--layers']),
-                            'VOCAB_PATH': vocab_path}
+                            'VOCAB_PATH': vocab_path,
+                            'OVER_SEGS': over_segs}
     
         print 'Building model...'
         pc = dy.ParameterCollection()
@@ -258,7 +396,7 @@ if __name__ == "__main__":
             then = time.time()
 
             # compute loss for each sample and update
-            random.shuffle(train_data)
+#            random.shuffle(train_data)
             train_loss = 0.
             loss_processed = 0 # for intermidiate reporting
             train_units_processed = 0 # for intermidiate reporting
@@ -267,13 +405,17 @@ if __name__ == "__main__":
             for i, input in enumerate(train_data, 1):
                 # comp graph for each training example
                 dy.renew_cg()
-                loss = lm.BuildLMGraph(input)
+#                loss_cg = lm.BuildLMGraph(input)
+                loss = lm.train(input)
+                
+#                if loss.scalar_value()!=loss_cg.scalar_value():
+#                    print 'epoch, i, loss, loss_cg: {}, {}, {}, {}'.format(epoch, i, loss.scalar_value(),loss_cg.scalar_value())
                 train_loss += loss.scalar_value()
                 loss_processed += loss.scalar_value()
                 loss.backward()
                 trainer.update()
-                train_units_processed += len(input) + 2
-                train_units += len(input) + 2
+                train_units_processed += len(input) + 1
+                train_units += len(input) + 1
                 
                 # intermediate report on perplexity
                 if i % 20000 == 0:
@@ -331,7 +473,13 @@ if __name__ == "__main__":
         print 'Loading data...'
         over_segs = arguments['--segments']
         test_path = check_path(arguments['--test_path'], '--test_path')
-        test_data = list(read(test_path, over_segs))
+        if arguments['--segformat']:
+            col_format=3
+        elif  arguments['--dictformat']:
+            col_format=1
+        else:
+            col_format=2
+        test_data = list(read(test_path, col_format, over_segs))
         print 'Test data has {} examples'.format(len(test_data))
         
         print 'Checking if any special symbols in data...'
