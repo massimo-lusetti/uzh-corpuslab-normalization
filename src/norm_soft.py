@@ -458,7 +458,7 @@ class SoftAttention(object):
             pred_length += 1
                 
         if not complete_hypotheses:
-        # nothing found because the model is so crappy
+        # nothing found
             complete_hypotheses = [(log_p,u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])) for s, log_p, word in hypos]
 
         complete_hypotheses.sort(key=lambda h: h[0], reverse=True)

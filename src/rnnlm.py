@@ -4,7 +4,7 @@
 
 Usage:
   rnnlm.py train [--dynet-seed SEED] [--dynet-mem MEM] [--segformat] [--dictformat]
-  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH]
+  [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--segments] [--vocab_path=VOCAB_PATH] [--vocab_trunk=VOCAB_TRUNK]
   [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
   MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   rnnlm.py test [--dynet-mem MEM] [--segformat] [--dictformat]
@@ -31,7 +31,8 @@ Options:
   --segments                    run LM over segments instead of chars
   --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
   --segformat                   format of the segmentation input file (3 cols)
-  --dictformat                   format of the dictionary (1 col)
+  --dictformat                  format of the dictionary (1 col)
+  --vocab_trunk=VOCAB_TRUNK     precentage of vocabulary to be replaced with unk [default: 0]
 """
 
 from __future__ import division
@@ -349,7 +350,7 @@ if __name__ == "__main__":
         vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
         if not os.path.exists(vocab_path):
             print 'Building vocabulary..'
-            build_vocabulary(train_data, vocab_path)
+            build_vocabulary(train_data, vocab_path, vocab_trunk=float(arguments['--vocab_trunk']))
 
         log_file_name   = model_folder + '/log.txt'
         best_model_path  = model_folder + '/bestmodel.txt'
@@ -405,9 +406,9 @@ if __name__ == "__main__":
             for i, input in enumerate(train_data, 1):
                 # comp graph for each training example
                 dy.renew_cg()
-#                loss_cg = lm.BuildLMGraph(input)
+#                loss = lm.BuildLMGraph(input)
                 loss = lm.train(input)
-                
+
 #                if loss.scalar_value()!=loss_cg.scalar_value():
 #                    print 'epoch, i, loss, loss_cg: {}, {}, {}, {}'.format(epoch, i, loss.scalar_value(),loss_cg.scalar_value())
                 train_loss += loss.scalar_value()
