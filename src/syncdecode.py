@@ -230,6 +230,9 @@ if __name__ == "__main__":
                 #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                 'LAYERS': int(hyperparams_dict['LAYERS']),
                     'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
+        # vocab folder is taken from the first nmt folder
+        vocab_path = check_path(path, 'ED_MODEL_FOLDER_{}'.format(0), is_data_path=False) + '/vocab.txt'
+        model_hyperparams['VOCAB_PATH'] = vocab_path
         ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
         ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
         
@@ -251,6 +254,9 @@ if __name__ == "__main__":
                 'LAYERS': int(hyperparams_dict['LAYERS']),
                     'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
                         'OVER_SEGS':  'OVER_SEGS' in hyperparams_dict}
+        # vocab folder is taken from the first nmt folder
+        vocab_path = check_path(path, 'ED_MODEL_FOLDER_{}'.format(0), is_data_path=False) + '/vocab.txt'
+        model_hyperparams['VOCAB_PATH'] = vocab_path
         lm_model_params.append(pc.add_subcollection('lm{}'.format(i)))
         lm_model =  RNNLanguageModel(lm_model_params[i], model_hyperparams,best_model_path)
         
