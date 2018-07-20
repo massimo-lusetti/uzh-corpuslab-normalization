@@ -49,6 +49,7 @@ from rnnlm import RNNLanguageModel
 MAX_PRED_SEQ_LEN = 50 # option
 
 def _compute_scores(lm_models, s_lm, w_lm, segment, UNK, eow=False):
+    """compute scores of model ensemble """
     lm_total_score=0
     if eow:
         for i,(m,s,w) in enumerate(zip(lm_models,s_lm,w_lm)):
@@ -73,6 +74,7 @@ def _compute_scores(lm_models, s_lm, w_lm, segment, UNK, eow=False):
             
     
 def predict_syncbeam(input, nmt_models, lm_models, lm_weights, beam = 1):
+    """predicts a string of characters performing synchronous beam-search."""
     dy.renew_cg()
     for nmt_model in nmt_models:
         nmt_model.param_init(input)
@@ -216,6 +218,7 @@ if __name__ == "__main__":
 
     ed_models= []
     ed_model_params = []
+    ## loading the nmt models
     for i,path in enumerate(arguments['ED_MODEL_FOLDER'].split(',')):
         print '...Loading nmt model {}'.format(i)
         ed_model_folder =  check_path(path, 'ED_MODEL_FOLDER_{}'.format(i), is_data_path=False)
@@ -235,6 +238,7 @@ if __name__ == "__main__":
 
     lm_models= []
     lm_model_params = []
+    ## loading the language models
     for i,path in enumerate(arguments['LM_MODEL_FOLDER'].split(',')):
         print '...Loading lm model {}'.format(i)
         lm_model_folder =  check_path(path, 'LM_MODEL_FOLDER_{}'.format(i), is_data_path=False)
