@@ -6,10 +6,10 @@ class SRILM_lm_loader(object):
 		self.lm_path = model_path
 		self.order=order
 		self.history=[]
-		self.history_len = ngram_order-1
-        self.lm = initLM(ngram_order)
-        readLM(self.lm, path)
-        self.vocab_size = howManyNgrams(self.lm, 1)
+		self.history_len = order-1
+                self.lm = initLM(order)
+                readLM(self.lm, self.lm_path)
+                self.vocab_size = howManyNgrams(self.lm, 1)
 	
 	def predict_next_seq(self, sequence):
 		"""retrieve the probability of a sequence from the language model
@@ -69,3 +69,7 @@ class SRILM_lm_loader(object):
 	def set_state(self, state):
 		"""Sets the current n-gram history """
 		self.history = state
+
+if __name__=="__main__":
+    import sys
+    sri_lm = SRILM_lm_loader(sys.argv[1],order=7)
