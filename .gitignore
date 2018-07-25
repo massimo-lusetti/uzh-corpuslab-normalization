@@ -1,0 +1,6 @@
+#on mac if you open a folder in finder
+.DS_store
+#python stuff
+__pycache__/
+*.py[cod]
+*$py.class
