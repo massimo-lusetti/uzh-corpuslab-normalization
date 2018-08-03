@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--segformat]
+  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase]
     [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
-  norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--segformat]
-    MODEL_FOLDER --test_path=TEST_FILE
-  norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--segformat]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE
+  norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+  norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
     
 
 Arguments:
@@ -35,7 +35,8 @@ Options:
   --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
   --beam=BEAM                   beam width [default: 1]
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
-  --segformat                   format of the segmentation input file (3 cols)
+  --input_format=INPUT_FORMAT   coma-separated list of input, output columns [default: 0,1]
+  --lowercase                   use lowercased data [default: False]
 """
 
 from __future__ import division
@@ -66,7 +67,7 @@ OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #co
 
 ### IO handling and evaluation
 
-def load_data(filename, three_col_format=False):
+def load_data(filename, input_format, lowercase=False):
     """ Load data from file
         
         filename (str):   file containing input/output data, structure (tab-separated):
@@ -77,22 +78,18 @@ def load_data(filename, three_col_format=False):
     
     print 'loading data from file:', filename
     
+    input_col, output_col = input_format
     inputs, outputs = [], []
     
     with codecs.open(filename, encoding='utf8') as f:
-        if not three_col_format:
-            for line in f:
-                splt = line.strip().split('\t')
-                assert len(splt) == 2, 'bad line: ' + line.encode('utf8') + '\n'
-                input, output = splt #can be adapted to the task with features
-                inputs.append(input)
-                outputs.append(output)
-        else:
-            for line in f:
-                splt = line.strip().split('\t')
-                assert len(splt) == 3, 'bad line: ' + line.encode('utf8') + '\n'
-                inputs.append(splt[0])
-                outputs.append(splt[2])
+        for i,line in enumerate(f):
+            if not len(line.strip())==0:
+                try:
+                    splt = line.strip().split('\t')
+                    inputs.append(splt[input_col].lower() if lowercase else splt[input_col])
+                    outputs.append(splt[output_col].lower() if lowercase else splt[output_col])
+                except:
+                    print "bad line: {}, {}".format(i,line)
 
     tup = (inputs, outputs)
     print 'found', len(outputs), 'examples'
@@ -129,10 +126,10 @@ class SoftDataSet(object):
         return zipped
     
     @classmethod
-    def from_file(cls, path, three_col_format, *args, **kwargs):
+    def from_file(cls, path, input_format, *args, **kwargs):
         # returns a `SoftDataSet` with fields: inputs, outputs
-        inputs, outputs = load_data(path, three_col_format)
-        return cls(inputs, outputs, *args, **kwargs)
+        inputs, outputs = load_data(path, input_format, *args, **kwargs)
+        return cls(inputs, outputs)
 
 class SoftAttention(object):
     def __init__(self, pc, model_hyperparams, best_model_path=None):
@@ -309,9 +306,9 @@ class SoftAttention(object):
 #            print i, input, predictions
             if prediction == output:
                 correct += 1
-            else:
-                print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
-                print predictions
+#            else:
+#                print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+#                print predictions
             final_results.append((input,prediction))  # pred expected as list
         accuracy = correct / len(data)
         return accuracy, final_results
@@ -731,11 +728,11 @@ if __name__ == "__main__":
         print 'Loading data...'
         data_set = SoftDataSet
         train_path = check_path(arguments['--train_path'], 'train_path')
-        three_col_format = True if arguments['--segformat'] else False
-        train_data = data_set.from_file(train_path,three_col_format)
+        input_format = [int(col) for col in arguments['--input_format'].split(',')]
+        train_data = data_set.from_file(train_path,input_format, arguments['--lowercase'])
         print 'Train data has {} examples'.format(train_data.length)
         dev_path = check_path(arguments['--dev_path'], 'dev_path')
-        dev_data = data_set.from_file(dev_path,three_col_format)
+        dev_data = data_set.from_file(dev_path,input_format, arguments['--lowercase'])
         print 'Dev data has {} examples'.format(dev_data.length)
     
         print 'Checking if any special symbols in data...'
@@ -885,8 +882,8 @@ if __name__ == "__main__":
         print 'Loading data...'
         test_path = check_path(arguments['--test_path'], '--test_path')
         data_set = SoftDataSet
-        three_col_format = True if arguments['--segformat'] else False
-        test_data = data_set.from_file(test_path,three_col_format)
+        input_format = [int(col) for col in arguments['--input_format'].split(',')]
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'])
         print 'Test data has {} examples'.format(test_data.length)
 
         print 'Checking if any special symbols in data...'

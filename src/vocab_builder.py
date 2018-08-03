@@ -47,6 +47,7 @@ def build_vocabulary(train_data, vocab_path, vocab_trunk=0):
     
     if vocab_trunk==0:
         items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
+        print set([c for w in train_data for c in w])
     else:
         tokens = [c for w in train_data for c in w]
         counter = collections.Counter(tokens)
@@ -61,6 +62,7 @@ def build_vocabulary(train_data, vocab_path, vocab_trunk=0):
     w2i[BEGIN_CHAR] = 0
     w2i[STOP_CHAR] = 1
     w2i[UNK_CHAR] = 2
+    print 'Vocabulary size: {}'.format(len(items))
     print 'Example of vocabulary items:' + u', '.join(items[:10])
     print
     vocab = Vocab.from_list(items,w2i)
