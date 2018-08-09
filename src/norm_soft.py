@@ -923,8 +923,8 @@ if __name__ == "__main__":
         print 'Loading data...'
         test_path = check_path(arguments['--test_path'], '--test_path')
         data_set = SoftDataSet
-        three_col_format = True if arguments['--segformat'] else False
-        test_data = data_set.from_file(test_path,three_col_format)
+        input_format = [int(col) for col in arguments['--input_format'].split(',')]
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'])
         print 'Test data has {} examples'.format(test_data.length)
         
         print 'Checking if any special symbols in data...'
