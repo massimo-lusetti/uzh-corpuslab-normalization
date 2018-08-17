@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_plus]
+  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
     [--char_input=CHAR_INPUT] [--word_input=WORD_INPUT] [--feat_input=FEAT_INPUT] [--hidden=HIDDEN] [--hidden_context=HIDDEN_CONTEXT] [--layers=LAYERS] [--char_vocab_path=VOCAB_PATH_CHAR] [--feat_vocab_path=VOCAB_PATH_FEAT] [--word_vocab_path=VOCAB_PATH_WORD]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_plus]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
   norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_plus]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
     
 
 Arguments:
@@ -41,7 +41,7 @@ Options:
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
   --lowercase                   use lowercased data [default: False]
-  --pos_split_plus              use plus sign to split POS tag features
+  --pos_split_space             use space sign to split POS tag features, the default is '+'
 """
 
 from __future__ import division
@@ -101,7 +101,7 @@ def load_data(filename, input_format, lowercase=False):
     print 'found', len(outputs), 'examples'
     return tup
 
-def load_data_pos(filename, input_format, lowercase=False, split_by_plus=False):
+def load_data_pos(filename, input_format, lowercase=False, split_by_space=False):
     """ Load data from file
         
         filename (str):   file containing input/output data, structure (tab-separated):
@@ -125,7 +125,7 @@ def load_data_pos(filename, input_format, lowercase=False, split_by_plus=False):
 #                    print splt
                     inputs.append(splt[input_col].lower() if lowercase else splt[input_col])
                     outputs.append(splt[output_col].lower() if lowercase else splt[output_col])
-                    features.append(splt[feat_col].split('+') if split_by_plus else splt[feat_col].split())
+                    features.append(splt[feat_col].split() if split_by_space else splt[feat_col].split('+'))
                 except:
                     print u"bad line: {}, {}".format(i,line)
             else:
@@ -736,10 +736,10 @@ if __name__ == "__main__":
         data_set = SoftDataSetFeat
         train_path = check_path(arguments['--train_path'], 'train_path')
         input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        train_data = data_set.from_file(train_path,input_format, arguments['--lowercase'], arguments['--pos_split_plus'])
+        train_data = data_set.from_file(train_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Train data has {} examples'.format(train_data.length)
         dev_path = check_path(arguments['--dev_path'], 'dev_path')
-        dev_data = data_set.from_file(dev_path,input_format, arguments['--lowercase'], arguments['--pos_split_plus'])
+        dev_data = data_set.from_file(dev_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Dev data has {} examples'.format(dev_data.length)
     
         print 'Checking if any special symbols in data...'
@@ -915,7 +915,7 @@ if __name__ == "__main__":
         test_path = check_path(arguments['--test_path'], '--test_path')
         data_set = SoftDataSetFeat
         input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_plus'])
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Test data has {} examples'.format(test_data.length)
 
         print 'Checking if any special symbols in data...'
@@ -959,7 +959,7 @@ if __name__ == "__main__":
         test_path = check_path(arguments['--test_path'], '--test_path')
         data_set = SoftDataSetFeat
         input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_plus'])
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Test data has {} examples'.format(test_data.length)
         
         print 'Checking if any special symbols in data...'
