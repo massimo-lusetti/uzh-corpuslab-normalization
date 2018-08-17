@@ -1,6 +1,8 @@
 #!/bin/bash
-# Usage Main-sms-soft-train.sh
-# ./Main-sms-soft-train.sh
+# Usage Main-sms-soft-train-pos.sh
+# ./Main-sms-soft-train-pos.sh nmt
+# ./Main-sms-soft-train-pos.sh norm_soft_pos
+# ./Main-sms-soft-train-pos.sh norm_soft_context
 ##########################################################################################
 
 
@@ -8,16 +10,19 @@ export TRAIN=SMS/POS/train.txt
 export DEV=SMS/POS/dev.txt
 export TEST=SMS/POS/test.txt
 
+export MODEL=$1
 export PR="sms"
 echo "$PR"
 
 ########### SEED 1 + eval
-PYTHONIOENCODING=utf8 python norm_soft_pos.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_nmt_pos_1  --epochs=30 --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 11 --train_path=$TRAIN --dev_path=$DEV ${PR}__${MODEL}_1  --epochs=30 --lowercase
 #
-#PYTHONIOENCODING=utf8 python norm_soft_1.py test ${PR}_nmt_1 --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
-#PYTHONIOENCODING=utf8 python norm_soft_1.py test ${PR}_nmt_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
-#PYTHONIOENCODING=utf8 python norm_soft_1.py test ${PR}_nmt_1 --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase
-PYTHONIOENCODING=utf8 python norm_soft_pos.py test ${PR}_nmt_pos_1 --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
+PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}__${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
+
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
 
 
 ########### SEED >1 + eval
@@ -25,12 +30,12 @@ PYTHONIOENCODING=utf8 python norm_soft_pos.py test ${PR}_nmt_pos_1 --test_path=$
 #for (( k=2; k<=5; k++ ))
 #do
 #(
-#PYTHONIOENCODING=utf8 python norm_soft.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_nmt_$k  --epochs=20 --vocab_path=${PR}_nmt_1/vocab.txt  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=20 --vocab_path=${PR}_${MODEL}_1/vocab.txt  --lowercase
 ##
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
 #)
 #done
 
@@ -40,24 +45,24 @@ PYTHONIOENCODING=utf8 python norm_soft_pos.py test ${PR}_nmt_pos_1 --test_path=$
 #for (( k=1; k<=5; k++ ))
 #do
 #(
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase&
-#PYTHONIOENCODING=utf8 python norm_soft.py test ${PR}_nmt_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase&
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
 #) &
 #done
 
 ########### Evaluate NMT ensemble 3
 
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3 --test_path=$DEV --beam=1 --pred_path=best.dev.1 ${PR}_nmt_ens3  --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_nmt_ens3  --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3 --test_path=$TEST --beam=1 --pred_path=best.test.1 ${PR}_nmt_ens3   --lowercase&
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_nmt_ens3  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$DEV --beam=1 --pred_path=best.dev.1 ${PR}_${MODEL}_ens3  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_${MODEL}_ens3  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$TEST --beam=1 --pred_path=best.test.1 ${PR}_${MODEL}_ens3   --lowercase&
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_${MODEL}_ens3  --lowercase &
 
 ########### Evaluate NMT ensemble 5
 
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3,${PR}_nmt_4,${PR}_nmt_5 --test_path=$DEV --beam=1 --pred_path=best.dev.1 ${PR}_nmt_ens5  --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3,${PR}_nmt_4,${PR}_nmt_5 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_nmt_ens5  --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3,${PR}_nmt_4,${PR}_nmt_5 --test_path=$TEST --beam=1 --pred_path=best.test.1 ${PR}_nmt_ens5   --lowercase &
-#PYTHONIOENCODING=utf8 python norm_soft.py ensemble_test ${PR}_nmt_1,${PR}_nmt_2,${PR}_nmt_3,${PR}_nmt_4,${PR}_nmt_5 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_nmt_ens5  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$DEV --beam=1 --pred_path=best.dev.1 ${PR}_${MODEL}_ens5  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_${MODEL}_ens5  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$TEST --beam=1 --pred_path=best.test.1 ${PR}_${MODEL}_ens5   --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_${MODEL}_ens5  --lowercase &
 

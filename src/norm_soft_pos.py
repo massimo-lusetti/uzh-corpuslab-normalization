@@ -879,7 +879,7 @@ if __name__ == "__main__":
                             #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                             'LAYERS': int(hyperparams_dict['LAYERS']),
             'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
-                'FEAT_INPUT_DIM': int(hyperparams_dict['--feat_input']),
+                'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                     'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
@@ -924,7 +924,7 @@ if __name__ == "__main__":
                     #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                     'LAYERS': int(hyperparams_dict['LAYERS']),
                         'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
-                        'FEAT_INPUT_DIM': int(hyperparams_dict['--feat_input']),
+                        'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                         'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)

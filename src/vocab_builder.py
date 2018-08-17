@@ -42,14 +42,20 @@ class Vocab(object):
     
     def size(self): return len(self.w2i.keys())
 
-def build_vocabulary(train_data, vocab_path, vocab_trunk=0):
+def build_vocabulary(train_data, vocab_path, vocab_trunk=0, over_words=False):
     # Build vocabulary over items - chars or segments - and save it to 'vocab_path'
     
     if vocab_trunk==0:
-        items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
-        print set([c for w in train_data for c in w])
+        if not over_words:
+            items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
+            print set([c for w in train_data for c in w])
+        else:
+            items = list(set(train_data))
     else:
-        tokens = [c for w in train_data for c in w]
+        if not over_words:
+            tokens = [c for w in train_data for c in w]
+        else:
+            tokens=train_data
         counter = collections.Counter(tokens)
         print u'Word types in train set: {}'.format(len(counter))
         n = len(counter) - int(len(counter)*vocab_trunk)
