@@ -16,8 +16,6 @@ echo "$PR"
 
 ########### SEED 1 + eval
 #PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 11 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=30 --lowercase
-#
-PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
 
 #PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
 #PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
