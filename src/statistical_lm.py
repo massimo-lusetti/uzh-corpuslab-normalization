@@ -1,63 +1,36 @@
 from srilm import readLM, initLM, getNgramProb, getIndexForWord, howManyNgrams
 
-class SRILM_lm_loader(object):
+class SRILM_char_lm_loader(object):
 	"""TODO"""
 	def __init__(self, model_path, order=2): 
 		self.lm_path = model_path
 		self.order=order
 		self.history=[]
-                self.EOS_ID = 2
+                self.EOS_ID = 1
 		self.history_len = order-1
                 self.lm = initLM(order)
                 readLM(self.lm, self.lm_path)
                 self.vocab_size = howManyNgrams(self.lm, 1)
 	
-	def predict_next_seq(self, sequence):
+	def predict_next(self, char):
 		"""retrieve the probability of a sequence from the language model
 		 based on the current history"""
 		prefix = "%s " % ' '.join(self.history)
-		#~ logging.debug(u'LM over chars prefix: {}'.format(prefix))
-		
+				
 		order = len(self.history) + 1
 
-		ret = getNgramProb(self.lm, prefix + ("</s>" if sequence == self.EOS_ID else str(sequence)), order)
-		#~ logging.debug(u'LM over chars distribution: {}'.format(ret))
+		ret = getNgramProb(self.lm, prefix + ("</s>" if char == self.EOS_ID else str(char)), order)
 		return ret
-	
-	def predict_next_morph(self, morphemes, eow=0):
-		"""Score the set of target MORPHEMES with the n-gram language model given the current history of MORPHEMES.
-		
-		Args:
-		words (list): Set of morphemes to score
-		Returns:
-		dict. Language model scores for the words in ``words``
-		"""
-		prefix = "%s " % ' '.join(self.history)
+
+        def score(self):
+                prefix = "%s " % ' '.join(self.history)
+				
 		order = len(self.history) + 1
-			
-		if eow==1:
-			# Score for the end of word symbol:
-			# logP(second-last-morf last-morf morf </s>) = logP(second-last-morf last-morf morf) + logP(last-morf morf </s>)
-			#prefix_eos = "%s " % ' '.join(self.history[1:]) if len(self.history) > self.history_len else "%s " % ' '.join(self.history)
-			prefix_eos = "%s " % ' '.join(self.history[1:]) if len(self.history) == self.history_len else "%s " % ' '.join(self.history)
-			#prefix_eos = "%s " % ' '.join(self.history[1:])
-			#order_eos = order+1
-			order_eos = order if len(self.history) == self.history_len else order+1
-			#order_eos = order
-			#~ logging.debug(u"prefix: {} w: {} order: {} score {}".format(prefix + str(morphemes[0]),str(morphemes[0]),order,getNgramProb(self.lm, prefix + str(morphemes[0]), order)))
-			
-			#~ logging.debug(u"prefix_eos: {} w: {} order: {} score {}".format(prefix_eos + str(morphemes[0]) + " </s>", " </s>",order_eos, getNgramProb(self.lm, prefix_eos + str(morphemes[0]) + " </s>", order_eos)))
-			
-			prob = {w: (getNgramProb(self.lm, prefix + str(w), order) + getNgramProb(self.lm, prefix_eos + str(w) + " </s>", order_eos)) for w in morphemes}
-					
-		else:
-			#~ logging.debug(u"prefix: {} w: {} score {}".format(prefix,str(morphemes[0]),getNgramProb(self.lm, prefix + str(morphemes[0]), order)))
-			# Score for the segmentation boundary symbol:
-			prob = {w: getNgramProb(self.lm, prefix + str(w), order) for w in morphemes}
+
+		ret = getNgramProb(self.lm, sequence, order)
+		return ret
 		
-		return prob
-	
-	def consume(self):
+	def consume(self, word):
 		"""add predicted item to vocabulary"""
 		if len(self.history) >= self.history_len:
 			self.history = self.history[1:]
@@ -71,9 +44,41 @@ class SRILM_lm_loader(object):
 		"""Sets the current n-gram history """
 		self.history = state
 
+class SRILM_morpheme_lm_loader(SRILM_char_lm_loader):
+        def __init__(self, model_path, order=2):
+                super(SRILM_morpheme_lm_loader, self).__init__(model_path, order)
+                
+	def predict_next_morph(self, morpheme, eow=0):
+		"""Score the set of target MORPHEMES with the n-gram language model given the current history of MORPHEMES.
+		
+		Args:
+		words (list): Set of morphemes to score
+		Returns:
+		dict. Language model scores for the words in ``words``
+		"""
+		prefix = "%s " % ' '.join(self.history)
+		order = len(self.history) + 1
+			
+		if eow==1:
+			# Score for the end of word symbol:
+			# logP(second-last-morf last-morf morf </s>) = logP(second-last-morf last-morf morf) + logP(last-morf morf </s>)
+			prefix_eos = "%s " % ' '.join(self.history[1:]) if len(self.history) == self.history_len else "%s " % ' '.join(self.history)
+        		order_eos = order if len(self.history) == self.history_len else order+1
+						
+			
+			prob = (getNgramProb(self.lm, prefix + str(morpheme), order) + getNgramProb(self.lm, prefix_eos + str(morpheme) + " </s>", order_eos))
+					
+		else:
+			prob = getNgramProb(self.lm, prefix + str(morpheme), order)
+		
+		return prob
+
+
 if __name__=="__main__":
     import sys
-    sri_lm = SRILM_lm_loader(sys.argv[1],order=7)
-
-    print sri_lm.predict_next_seq(["hello"])
-    print sri_lm.predict_next_morph(["hel","lo"])
+    sri_lm_char = SRILM_char_lm_loader(sys.argv[1],order=7)
+    sri_lm_morph = SRILM_morpheme_lm_loader(sys.argv[1],order=7)
+    print sri_lm_char.predict_next(2035)
+    print sri_lm_morph.predict_next(2035)
+    sri_lm_morph.consume(2035)
+    print sri_lm_morph.predict_next(1788)
