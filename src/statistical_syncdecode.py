@@ -49,29 +49,19 @@ from norm_soft import log_to_file, SoftDataSet, SoftAttention
 from statistical_lm import SRILM_char_lm_loader, SRILM_morpheme_lm_loader
 MAX_PRED_SEQ_LEN = 50 # option
 
-def _compute_scores(s_lm, w_lm, segment, UNK, eow=False):
+def _compute_scores(lm_models, lm_states, lm_weights, BOUNDARY, STOP, UNK, segment, eow=False):
     """compute scores of model ensemble """
     lm_total_score=0
-    if eow:
-        for i,(m,s,w) in enumerate(zip(lm_models,s_lm,w_lm)):
-            scores = m.predict_next_(s, scores=False)
-            if m.hyperparams['OVER_SEGS'] == True:
-                segment_id = m.vocab.w2i.get(segment, UNK)
-                lm_eow_score = m.score3_(s, segment_id, scores=False, eof = True)
-            else:
-                lm_eow_score = dy.pick(scores,m.vocab.w2i[STOP_CHAR])
-            lm_total_score += -np.log(lm_eow_score.value()) * w
+    
+    for i,(m,s) in enumerate(zip(lm_models,lm_states)):
+        if m.__name__ == 'SRILM_morph_lm_loader':
+            segment_id = m.vocab.w2i.get(segment, UNK)
+            m.set_state(s)
+            lm_score = m.score()
+            s=m.get_state())
+        elif m.__name__ == 'SRILM_char_lm_loader':
             
-    else:
-        for i,(m,s,w) in enumerate(zip(lm_models,s_lm,w_lm)):
-            scores = m.predict_next_(s, scores=False)
-            if m.hyperparams['OVER_SEGS'] == True:
-                segment_id = m.vocab.w2i.get(segment, UNK)
-                lm_boundary_score = dy.pick(scores,segment_id)
-            else:
-                lm_boundary_score = dy.pick(scores,m.vocab.w2i[BOUNDARY_CHAR])
-            lm_total_score += -np.log(lm_boundary_score.value()) * w
-    return lm_total_score
+    return lm_total_score, lm_states
             
     
 def predict_syncbeam(input, nmt_models, lm_models, lm_weights, beam = 1):
