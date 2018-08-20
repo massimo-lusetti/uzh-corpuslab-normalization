@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase]
-    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
+  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
+    [--input=INPUT] [--hidden=HIDDEN] [--feat_input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH] [--feat_vocab_path=FEAT_VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
   norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
     
 
 Arguments:
@@ -23,7 +23,7 @@ Options:
   --dynet-mem MEM               allocates MEM bytes for DyNET [default: 500]
   --input=INPUT                 input vector dimensions [default: 100]
   --hidden=HIDDEN               hidden layer dimensions [default: 200]
-  --feat-input=FEAT             feature input vector dimension [default: 20]
+  --feat_input=FEAT             feature input vector dimension [default: 20]
   --layers=LAYERS               amount of layers in LSTMs  [default: 1]
   --dropout=DROPOUT             amount of dropout in LSTMs [default: 0]
   --epochs=EPOCHS               number of training epochs   [default: 30]
@@ -33,10 +33,12 @@ Options:
   --dev_path=DEV_FILE           dev set path, possibly relative to DATA_FOLDER, only for training
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --vocab_path=VOCAB_PATH       vocab path, possibly relative to RESULTS_FOLDER [default: vocab.txt]
+  --feat_vocab_path=FEAT_VOCAB_PATH  feat vocab path, possibly relative to RESULTS_FOLDER [default: feat_vocab.txt]
   --beam=BEAM                   beam width [default: 1]
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
-  --input_format=INPUT_FORMAT   coma-separated list of input, output columns [default: 0,1]
+  --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
   --lowercase                   use lowercased data [default: False]
+  --pos_split_space              use plus sign to split POS tag features
 """
 
 from __future__ import division
@@ -57,6 +59,7 @@ import os
 
 from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path, write_pred_file, write_param_file, write_eval_file
 from vocab_builder import build_vocabulary, Vocab
+from norm_soft import SoftDataSet
 
 MAX_PRED_SEQ_LEN = 50 # option
 OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #common
@@ -95,6 +98,38 @@ def load_data(filename, input_format, lowercase=False):
     print 'found', len(outputs), 'examples'
     return tup
 
+def load_data_pos(filename, input_format, lowercase=False, split_by_space=False):
+    """ Load data from file
+        
+        filename (str):   file containing input/output data, structure (tab-separated):
+        input    output  POS
+        return tuple (output, input) where each element is a list
+        where each element in the list is one example
+        """
+    
+    print 'loading data from file:', filename
+    
+    input_col, output_col, feat_col = input_format
+    inputs, outputs, features = [], [], []
+    
+    with codecs.open(filename, encoding='utf8') as f:
+        for i,line in enumerate(f):
+            if not len(line.strip())==0:
+                try:
+                    splt = line.strip().split('\t')
+#                    print splt
+                    inputs.append(splt[input_col].lower() if lowercase else splt[input_col])
+                    outputs.append(splt[output_col].lower() if lowercase else splt[output_col])
+                    features.append(splt[feat_col].split() if split_by_space else splt[feat_col].split('+'))
+                except:
+                    print u"bad line: {}, {}".format(i,line)
+    tup = (inputs, outputs, features)
+    print 'found', len(outputs), 'examples'
+    print u'example of data: {}'.format((inputs[:2],outputs[:2],features[:2]) )
+    return tup
+
+
+
 def log_to_file(log_file_name, e, avg_train_loss, train_accuracy, dev_accuracy):
     # if first write, add headers
     if e == 0:
@@ -104,32 +139,20 @@ def log_to_file(log_file_name, e, avg_train_loss, train_accuracy, dev_accuracy):
         logfile.write("{}\t{}\t{}\t{}\n".format(e, avg_train_loss, train_accuracy, dev_accuracy))
 
 # class to handle data
-class SoftDataSet(object):
-    def __init__(self, inputs, outputs):
+class SoftDataSetFeat(SoftDataSet):
+    def __init__(self, inputs, outputs, features):
+        super(SoftDataSetFeat,self).__init__(inputs, outputs)
         self.inputs = inputs
         self.outputs = outputs
-        self.dataset = self.inputs, self.outputs
+        self.features = features
+        self.dataset = self.inputs, self.outputs, self.features
         self.length = len(self.outputs)
-    
-    def iter(self, indices=None, shuffle=False):
-        zipped = zip(*self.dataset)
-        if indices or shuffle:
-            if not indices:
-                indices = range(self.length)
-            elif isinstance(indices, int):
-                indices = range(indices)
-            else:
-                assert isinstance(indices, (list, tuple))
-            if shuffle:
-                random.shuffle(indices)
-            zipped = [zipped[i] for i in indices]
-        return zipped
     
     @classmethod
     def from_file(cls, path, input_format, *args, **kwargs):
         # returns a `SoftDataSet` with fields: inputs, outputs
-        inputs, outputs = load_data(path, input_format, *args, **kwargs)
-        return cls(inputs, outputs)
+        inputs, outputs, features = load_data_pos(path, input_format, *args, **kwargs)
+        return cls(inputs, outputs, features)
 
 class SoftAttention(object):
     def __init__(self, pc, model_hyperparams, best_model_path=None):
@@ -138,10 +161,14 @@ class SoftAttention(object):
         
         print 'Loading vocabulary from {}:'.format(self.hyperparams['VOCAB_PATH'])
         self.vocab = Vocab.from_file(self.hyperparams['VOCAB_PATH'])
+        print 'Loading feature vocabulary from {}:'.format(self.hyperparams['FEAT_VOCAB_PATH'])
+        self.feat_vocab = Vocab.from_file(self.hyperparams['FEAT_VOCAB_PATH'])
+        
         self.BEGIN   = self.vocab.w2i[BEGIN_CHAR]
         self.STOP   = self.vocab.w2i[STOP_CHAR]
         self.UNK       = self.vocab.w2i[UNK_CHAR]
         self.hyperparams['VOCAB_SIZE'] = self.vocab.size()
+        self.hyperparams['FEAT_VOCAB_SIZE'] = self.feat_vocab.size()
         
         self.build_model(pc, best_model_path)
         
@@ -154,7 +181,7 @@ class SoftAttention(object):
         
         if best_model_path:
             print 'Loading model from: {}'.format(best_model_path)
-            self.fbuffRNN, self.bbuffRNN, self.VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a = dy.load(best_model_path, pc)
+            self.fbuffRNN, self.bbuffRNN, self.VOCAB_LOOKUP, self.FEAT_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a = dy.load(best_model_path, pc)
         else:
             # BiLSTM for input
             self.fbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], pc)
@@ -162,18 +189,20 @@ class SoftAttention(object):
             
             # embedding lookups for vocabulary
             self.VOCAB_LOOKUP  = pc.add_lookup_parameters((self.hyperparams['VOCAB_SIZE'], self.hyperparams['INPUT_DIM']))
+            
+            self.FEAT_VOCAB_LOOKUP = pc.add_lookup_parameters((self.hyperparams['FEAT_VOCAB_SIZE'], self.hyperparams['FEAT_INPUT_DIM']))
 
             # decoder LSTM
             self.decoder = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'], pc)
 
             # softmax parameters
-            self.R = pc.add_parameters((self.hyperparams['VOCAB_SIZE'], 3 * self.hyperparams['HIDDEN_DIM']))
+            self.R = pc.add_parameters((self.hyperparams['VOCAB_SIZE'], 3 * self.hyperparams['HIDDEN_DIM'] + self.hyperparams['FEAT_INPUT_DIM']))
             self.bias = pc.add_parameters(self.hyperparams['VOCAB_SIZE'])
             
             # attention MLPs - Loung-style with extra v_a from Bahdanau
             
             # concatenation layer for h (hidden dim), c (2 * hidden_dim)
-            self.W_c = pc.add_parameters((3 * self.hyperparams['HIDDEN_DIM'], 3 * self.hyperparams['HIDDEN_DIM']))
+            self.W_c = pc.add_parameters((3 * self.hyperparams['HIDDEN_DIM'] + self.hyperparams['FEAT_INPUT_DIM'], 3 * self.hyperparams['HIDDEN_DIM'] + self.hyperparams['FEAT_INPUT_DIM']))
             
             # attention MLP's - Bahdanau-style
             # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
@@ -188,6 +217,7 @@ class SoftAttention(object):
         
         print 'Model dimensions:'
         print ' * VOCABULARY EMBEDDING LAYER: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['VOCAB_SIZE'], self.hyperparams['INPUT_DIM'])
+        print ' * FEATURES VOCABULARY EMBEDDING LAYER: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['FEAT_VOCAB_SIZE'], self.hyperparams['FEAT_INPUT_DIM'])
         print
         print ' * ENCODER biLSTM: IN-DIM: {}, OUT-DIM: {}'.format(2*self.hyperparams['INPUT_DIM'], 2*self.hyperparams['HIDDEN_DIM'])
         print ' * DECODER LSTM: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['INPUT_DIM'], self.hyperparams['HIDDEN_DIM'])
@@ -197,7 +227,7 @@ class SoftAttention(object):
         print
 
     def save_model(self, best_model_path):
-        dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a])
+        dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.VOCAB_LOOKUP, self.FEAT_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a])
 
 
     def bilstm_transduce(self, encoder_frnn, encoder_rrnn, input_char_vecs):
@@ -225,83 +255,13 @@ class SoftAttention(object):
         
         return blstm_outputs
 
-    def transduce(self, input, _true_output=None, feats=None):
-        
-        # convert _true_output string to list of vocabulary indeces
-        if _true_output:
-            try:
-                true_output = [self.vocab.w2i[a] for a in _true_output]
-            except:
-                print a
-                print _true_output
-            true_output += [self.STOP]
-            true_output = list(reversed(true_output))
-        
-        R = dy.parameter(self.R)   # hidden to vocabulary
-        bias = dy.parameter(self.bias)
-        W_c = dy.parameter(self.W_c)
-        W__a = dy.parameter(self.W__a)
-        U__a = dy.parameter(self.U__a)
-        v__a = dy.parameter(self.v__a)
-        
-        
-        # biLSTM encoder of input string
-        input = [BEGIN_CHAR] + [c for c in input] + [STOP_CHAR]
-
-        input_emb = []
-        for char_ in reversed(input):
-            char_id = self.vocab.w2i.get(char_, self.UNK)
-            char_embedding = self.VOCAB_LOOKUP[char_id]
-            input_emb.append(char_embedding)
-        biencoder = self.bilstm_transduce(self.fbuffRNN, self.bbuffRNN, input_emb)
-        
-        losses = []
-        output = []
-        pred_history = [self.BEGIN] # <
-        s = self.decoder.initial_state()
-        
-        while not len(pred_history) == MAX_PRED_SEQ_LEN:
-            # compute probability over vocabulary and choose a prediction
-            # either from the true prediction at train time or based on the model at test time
-            
-            # decoder next state
-            prev_pred_id = pred_history[-1]
-            s = s.add_input(self.VOCAB_LOOKUP[prev_pred_id])
-            
-            # soft attention vector
-            scores = [v__a * dy.tanh(W__a * s.output() + U__a * h_input) for h_input in biencoder]
-            alphas = dy.softmax(dy.concatenate(scores))
-            c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(biencoder)])
-            
-            # softmax over vocabulary
-            h_output = dy.tanh(W_c * dy.concatenate([s.output(), c]))
-            probs = dy.softmax(R * h_output + bias)
-
-            if _true_output is None:
-                pred_id = np.argmax(probs.npvalue())
-            else:
-                pred_id = true_output.pop()
-                
-            losses.append(-dy.log(dy.pick(probs, pred_id)))
-            pred_history.append(pred_id)
-            
-            if pred_id == self.STOP:
-                break
-            else:
-                pred_char = self.vocab.i2w.get(pred_id,UNK_CHAR)
-                output.append(pred_char)
-
-        output = u''.join(output)
-        return ((dy.average(losses) if losses else None), output)
-
-
     def evaluate(self, data, beam):
         # data is a list of tuples (an instance of SoftDataSet with iter method applied)
         correct = 0.
         final_results = []
-        for i,(input,output) in enumerate(data):
+        for i,(input,output, features) in enumerate(data):
             dy.renew_cg()
-            predictions = self.predict(input, beam)
+            predictions = self.predict(input, features, beam)
             prediction = predictions[0][1]
 #            print i, input, predictions
             if prediction == output:
@@ -314,7 +274,7 @@ class SoftAttention(object):
         return accuracy, final_results
 
 
-    def param_init(self, input): #initialize parameters for current cg with the current input
+    def param_init(self, input, features): #initialize parameters for current cg with the current input
     
         R = dy.parameter(self.R)   # from parameters to expressions
         bias = dy.parameter(self.bias)
@@ -334,6 +294,12 @@ class SoftAttention(object):
             char_embedding = self.VOCAB_LOOKUP[char_id]
             input_emb.append(char_embedding)
         self.biencoder = self.bilstm_transduce(self.fbuffRNN, self.bbuffRNN, input_emb)
+        
+        feat_emb = []
+        for f in features:
+            f_id = self.feat_vocab.w2i.get(f, self.UNK)
+            feat_emb.append(self.FEAT_VOCAB_LOOKUP[f_id])
+        self.feat_emb = dy.average(feat_emb)
     
 #        losses = []
 #        output = []
@@ -350,7 +316,7 @@ class SoftAttention(object):
         c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder)])
             
         # softmax over vocabulary
-        h_output = dy.tanh(W_c * dy.concatenate([self.s.output(), c]))
+        h_output = dy.tanh(W_c * dy.concatenate([self.s.output(), c, self.feat_emb]))
         if not hidden:
             if not scores:
                 return dy.softmax(R * h_output + bias)
@@ -368,7 +334,7 @@ class SoftAttention(object):
         c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder)])
         
         # softmax over vocabulary
-        h_output = dy.tanh(W_c * dy.concatenate([state.output(), c]))
+        h_output = dy.tanh(W_c * dy.concatenate([state.output(), c, self.feat_emb]))
         if not hidden:
             if not scores:
     #            print 'probs:'
@@ -386,12 +352,12 @@ class SoftAttention(object):
         new_state = state.add_input(self.VOCAB_LOOKUP[pred_id])
         return new_state
 
-    def train(self, input, _true_output):
+    def train(self, input, features, _true_output):
 
         true_output = [self.vocab.w2i[a] for a in _true_output]
         true_output += [self.STOP]
 
-        self.param_init(input)
+        self.param_init(input, features)
 
         losses = []
 #        pred_id = self.BEGIN
@@ -402,8 +368,8 @@ class SoftAttention(object):
             self.consume_next(pred_id)
         return dy.average(losses)
 
-    def predict_greedy(self, input):
-        self.param_init(input)
+    def predict_greedy(self, input, features):
+        self.param_init(input, features)
         output = []
         while not len(output) == MAX_PRED_SEQ_LEN:
             probs = self.predict_next()
@@ -417,54 +383,54 @@ class SoftAttention(object):
         output = u''.join(output)
         return output
     
-    # This method is correct but not optimized
-    def predict_old(self, input, beam = 1):
-        self.param_init(input)
-        output = []
-        hypos = [(self.s, 0., [])]
-#        (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
-        complete_hypotheses = []
-        pred_length = 0
-
-        while pred_length <= MAX_PRED_SEQ_LEN and len(hypos) > 0:
-            expansion = []
-            for s, log_p, word in hypos:
-                # soft attention vector
-#                probs = self.predict_next_(s)
-#                log_probs_expr = dy.log(probs)
-                log_probs_expr = dy.log_softmax(self.predict_next_(s, scores=True))
-                log_probs = log_probs_expr.npvalue()
-                top = np.argsort(log_probs)[-beam:]
-#                print 'expansions ' + u', '.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in top])
-                expansion.extend(( (s, log_p + log_probs[pred_id], copy.copy(word), pred_id) for pred_id in top ))
-
-            hypos = []
-            expansion.sort(key=lambda e: e[1])
-            for e in expansion[-beam:]:
-                s, log_p, word, pred_id = e
-                if pred_id == self.STOP:
-                    complete_hypotheses.append((log_p,word))
-#                    complete_hypotheses.append((log_p,u''.join(word)))
-#                    print u'complete hypo: {}'.format(u''.join(word))
-                else:
-#                    word.append(self.vocab.i2w.get(pred_id,UNK_CHAR))
-                    word.append(pred_id)
-                    hypos.append((self.consume_next_(s,pred_id), log_p, word))
-#            print 'hypos :'
-#            print u', '.join([u''.join(word) for s, log_p, word in hypos])
-            pred_length += 1
-                
-        if not complete_hypotheses:
-        # nothing found
-            complete_hypotheses = [(log_p,u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])) for s, log_p, word in hypos]
-
-        complete_hypotheses.sort(key=lambda h: h[0], reverse=True)
-        final_hypos = []
-        for log_p, word in complete_hypotheses[:beam]:
-            final_hypos.append((log_p, u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])))
-#        print complete_hypotheses
-#        print complete_hypotheses[:beam]
-        return final_hypos
+#    # This method is correct but not optimized
+#    def predict_old(self, input, beam = 1):
+#        self.param_init(input)
+#        output = []
+#        hypos = [(self.s, 0., [])]
+##        (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
+#        complete_hypotheses = []
+#        pred_length = 0
+#
+#        while pred_length <= MAX_PRED_SEQ_LEN and len(hypos) > 0:
+#            expansion = []
+#            for s, log_p, word in hypos:
+#                # soft attention vector
+##                probs = self.predict_next_(s)
+##                log_probs_expr = dy.log(probs)
+#                log_probs_expr = dy.log_softmax(self.predict_next_(s, scores=True))
+#                log_probs = log_probs_expr.npvalue()
+#                top = np.argsort(log_probs)[-beam:]
+##                print 'expansions ' + u', '.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in top])
+#                expansion.extend(( (s, log_p + log_probs[pred_id], copy.copy(word), pred_id) for pred_id in top ))
+#
+#            hypos = []
+#            expansion.sort(key=lambda e: e[1])
+#            for e in expansion[-beam:]:
+#                s, log_p, word, pred_id = e
+#                if pred_id == self.STOP:
+#                    complete_hypotheses.append((log_p,word))
+##                    complete_hypotheses.append((log_p,u''.join(word)))
+##                    print u'complete hypo: {}'.format(u''.join(word))
+#                else:
+##                    word.append(self.vocab.i2w.get(pred_id,UNK_CHAR))
+#                    word.append(pred_id)
+#                    hypos.append((self.consume_next_(s,pred_id), log_p, word))
+##            print 'hypos :'
+##            print u', '.join([u''.join(word) for s, log_p, word in hypos])
+#            pred_length += 1
+#                
+#        if not complete_hypotheses:
+#        # nothing found
+#            complete_hypotheses = [(log_p,u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])) for s, log_p, word in hypos]
+#
+#        complete_hypotheses.sort(key=lambda h: h[0], reverse=True)
+#        final_hypos = []
+#        for log_p, word in complete_hypotheses[:beam]:
+#            final_hypos.append((log_p, u''.join([self.vocab.i2w.get(pred_id,UNK_CHAR) for pred_id in word])))
+##        print complete_hypotheses
+##        print complete_hypotheses[:beam]
+#        return final_hypos
 
     @staticmethod
     def _smallest(matrix, k, only_first_row=False):
@@ -488,7 +454,7 @@ class SoftAttention(object):
         args = args[np.argsort(flatten[args])]
         return np.unravel_index(args, matrix.shape), flatten[args]
 
-    def predict(self, input, beam_size, ignore_first_eol=False, as_arrays=False):
+    def predict(self, input, features, beam_size, ignore_first_eol=False, as_arrays=False):
         """Performs beam search.
             If the beam search was not compiled, it also compiles it.
             Parameters
@@ -515,7 +481,7 @@ class SoftAttention(object):
             """
         
         
-        self.param_init(input)
+        self.param_init(input, features)
         states = [self.s] * beam_size
         # This array will store all generated outputs, including those from
         # previous step and those from already finished sequences.
@@ -577,9 +543,9 @@ def evaluate_ensemble(nmt_models, data, beam):
     # data is a list of tuples (an instance of SoftDataSet with iter method applied)
     correct = 0.
     final_results = []
-    for i,(input,output) in enumerate(data):
+    for i,(input,output, features) in enumerate(data):
         dy.renew_cg()
-        predictions = predict_ensemble(nmt_models, input, beam)
+        predictions = predict_ensemble(nmt_models, input, features, beam)
         prediction = predictions[0][1]
         #            print i, input, predictions
         if prediction == output:
@@ -592,7 +558,7 @@ def evaluate_ensemble(nmt_models, data, beam):
     return accuracy, final_results
 
 
-def predict_ensemble(nmt_models, input, beam_size, ignore_first_eol=False, as_arrays=False):
+def predict_ensemble(nmt_models, input, features, beam_size, ignore_first_eol=False, as_arrays=False):
     """Performs beam search for ensemble of models.
     If the beam search was not compiled, it also compiles it.
     Parameters
@@ -622,7 +588,7 @@ def predict_ensemble(nmt_models, input, beam_size, ignore_first_eol=False, as_ar
     STOP   = nmt_vocab.w2i[STOP_CHAR]
     
     for m in nmt_models:
-        m.param_init(input)
+        m.param_init(input, features)
     states = [[m.s] * beam_size for m in nmt_models] # ensemble x beam matrix of states
     # This array will store all generated outputs, including those from
     # previous step and those from already finished sequences.
@@ -726,13 +692,13 @@ if __name__ == "__main__":
         
         # load data
         print 'Loading data...'
-        data_set = SoftDataSet
+        data_set = SoftDataSetFeat
         train_path = check_path(arguments['--train_path'], 'train_path')
         input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        train_data = data_set.from_file(train_path,input_format, arguments['--lowercase'])
+        train_data = data_set.from_file(train_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Train data has {} examples'.format(train_data.length)
         dev_path = check_path(arguments['--dev_path'], 'dev_path')
-        dev_data = data_set.from_file(dev_path,input_format, arguments['--lowercase'])
+        dev_data = data_set.from_file(dev_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Dev data has {} examples'.format(dev_data.length)
     
         print 'Checking if any special symbols in data...'
@@ -754,12 +720,21 @@ if __name__ == "__main__":
                 print 'Building vocabulary..'
                 data = set(train_data.inputs + train_data.outputs)
                 build_vocabulary(data, vocab_path)
+                    
+        if os.path.exists(arguments['--feat_vocab_path']):
+                feat_vocab_path = arguments['--feat_vocab_path'] # absolute path  to existing vocab file
+        else:
+            tmp = os.path.join(RESULTS_FOLDER, arguments['--feat_vocab_path'])
+            if os.path.exists(tmp): # relative path to existing vocab file
+                feat_vocab_path = tmp
+            else:
+                feat_vocab_path = os.path.join(model_folder,arguments['--feat_vocab_path']) # no vocab - use default name
+                print 'Building features vocabulary..'
+                data = train_data.features
+                build_vocabulary(data, feat_vocab_path)
 
-#        if not os.path.exists(arguments['--vocab_path']):
-#            vocab_path = os.path.join(model_folder,arguments['--vocab_path'])
-#            print 'Building vocabulary..'
-#            data = set(train_data.inputs + train_data.outputs)
-#            build_vocabulary(data, vocab_path)
+
+
 
         # Paths for checks and results
         log_file_name   = model_folder + '/log.txt'
@@ -769,9 +744,10 @@ if __name__ == "__main__":
         # Model hypoparameters
         model_hyperparams = {'INPUT_DIM': int(arguments['--input']),
                             'HIDDEN_DIM': int(arguments['--hidden']),
-                            #'FEAT_INPUT_DIM': int(arguments['--feat-input']),
                             'LAYERS': int(arguments['--layers']),
-                            'VOCAB_PATH': vocab_path}
+                            'VOCAB_PATH': vocab_path,
+                            'FEAT_INPUT_DIM': int(arguments['--feat_input']),
+                            'FEAT_VOCAB_PATH': feat_vocab_path}
     
         print 'Building model...'
         pc = dy.ParameterCollection()
@@ -811,11 +787,11 @@ if __name__ == "__main__":
             train_loss = 0.  # total train loss
             avg_train_loss = 0.  # avg training loss
 
-            for i, (input, output) in enumerate(train_data.iter(shuffle=True)):
+            for i, (input, output, features) in enumerate(train_data.iter(shuffle=True)):
                 # here we do training
                 dy.renew_cg()
 #                loss, _ = ti.transduce(input, output)
-                loss = ti.train(input, output)
+                loss = ti.train(input, features,output)
 #                if loss is not None:
                 train_loss += loss.scalar_value()
                 loss.backward()
@@ -881,9 +857,9 @@ if __name__ == "__main__":
 
         print 'Loading data...'
         test_path = check_path(arguments['--test_path'], '--test_path')
-        data_set = SoftDataSet
+        data_set = SoftDataSetFeat
         input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'])
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Test data has {} examples'.format(test_data.length)
 
         print 'Checking if any special symbols in data...'
@@ -902,8 +878,9 @@ if __name__ == "__main__":
                             'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
                             #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                             'LAYERS': int(hyperparams_dict['LAYERS']),
-                            'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
-
+            'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
+                'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                    'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
@@ -922,9 +899,9 @@ if __name__ == "__main__":
         
         print 'Loading data...'
         test_path = check_path(arguments['--test_path'], '--test_path')
-        data_set = SoftDataSet
+        data_set = SoftDataSetFeat
         input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'])
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
         print 'Test data has {} examples'.format(test_data.length)
         
         print 'Checking if any special symbols in data...'
@@ -946,7 +923,9 @@ if __name__ == "__main__":
                 'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
                     #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                     'LAYERS': int(hyperparams_dict['LAYERS']),
-                        'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
+                        'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
+                        'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                        'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             
