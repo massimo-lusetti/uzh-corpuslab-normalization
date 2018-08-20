@@ -46,8 +46,7 @@ import copy
 from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, BOUNDARY_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path, write_pred_file, write_param_file, write_eval_file
 from vocab_builder import build_vocabulary, Vocab
 from norm_soft import log_to_file, SoftDataSet, SoftAttention
-from rnnlm import RNNLanguageModel
-
+from statistical_lm import SRILM_char_lm_loader, SRILM_morpheme_lm_loader
 MAX_PRED_SEQ_LEN = 50 # option
 
 def _compute_scores(s_lm, w_lm, segment, UNK, eow=False):
