@@ -6,10 +6,11 @@ class SRILM_lm_loader(object):
 		self.lm_path = model_path
 		self.order=order
 		self.history=[]
-		self.history_len = ngram_order-1
-        self.lm = initLM(ngram_order)
-        readLM(self.lm, path)
-        self.vocab_size = howManyNgrams(self.lm, 1)
+                self.EOS_ID = 2
+		self.history_len = order-1
+                self.lm = initLM(order)
+                readLM(self.lm, self.lm_path)
+                self.vocab_size = howManyNgrams(self.lm, 1)
 	
 	def predict_next_seq(self, sequence):
 		"""retrieve the probability of a sequence from the language model
@@ -19,7 +20,7 @@ class SRILM_lm_loader(object):
 		
 		order = len(self.history) + 1
 
-		ret = getNgramProb(self.lm, prefix + ("</s>" if w == utils.EOS_ID else str(w)), order)
+		ret = getNgramProb(self.lm, prefix + ("</s>" if sequence == self.EOS_ID else str(sequence)), order)
 		#~ logging.debug(u'LM over chars distribution: {}'.format(ret))
 		return ret
 	
@@ -52,7 +53,7 @@ class SRILM_lm_loader(object):
 		else:
 			#~ logging.debug(u"prefix: {} w: {} score {}".format(prefix,str(morphemes[0]),getNgramProb(self.lm, prefix + str(morphemes[0]), order)))
 			# Score for the segmentation boundary symbol:
-			prob = {w: getNgramProb(self.lm, prefix + str(w), order) * scaling_factor for w in morphemes}
+			prob = {w: getNgramProb(self.lm, prefix + str(w), order) for w in morphemes}
 		
 		return prob
 	
@@ -69,3 +70,10 @@ class SRILM_lm_loader(object):
 	def set_state(self, state):
 		"""Sets the current n-gram history """
 		self.history = state
+
+if __name__=="__main__":
+    import sys
+    sri_lm = SRILM_lm_loader(sys.argv[1],order=7)
+
+    print sri_lm.predict_next_seq(["hello"])
+    print sri_lm.predict_next_morph(["hel","lo"])
