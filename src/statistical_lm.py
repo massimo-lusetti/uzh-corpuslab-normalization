@@ -12,22 +12,13 @@ class SRILM_char_lm_loader(object):
                 readLM(self.lm, self.lm_path)
                 self.vocab_size = howManyNgrams(self.lm, 1)
 	
-	def predict_next(self, char):
+	def score(self, char):
 		"""retrieve the probability of a sequence from the language model
 		 based on the current history"""
 		prefix = "%s " % ' '.join(self.history)
-				
 		order = len(self.history) + 1
-
+		
 		ret = getNgramProb(self.lm, prefix + ("</s>" if char == self.EOS_ID else str(char)), order)
-		return ret
-
-        def score(self):
-                prefix = "%s " % ' '.join(self.history)
-				
-		order = len(self.history) + 1
-
-		ret = getNgramProb(self.lm, sequence, order)
 		return ret
 		
 	def consume(self, word):
@@ -48,7 +39,7 @@ class SRILM_morpheme_lm_loader(SRILM_char_lm_loader):
         def __init__(self, model_path, order=2):
                 super(SRILM_morpheme_lm_loader, self).__init__(model_path, order)
                 
-	def predict_next_morph(self, morpheme, eow=0):
+	def score(self, morpheme, eow=0):
 		"""Score the set of target MORPHEMES with the n-gram language model given the current history of MORPHEMES.
 		
 		Args:

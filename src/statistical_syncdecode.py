@@ -3,11 +3,13 @@
 """Synchronized decoding for combining soft attention models trained over chars with language model over segments(i.e. words/morphemes).
 
 Usage:
-  syncdecode.py [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE]
-  ED_MODEL_FOLDER LM_MODEL_FOLDER MODEL_FOLDER LM_WEIGHTS --test_path=TEST_FILE [--segformat]
+  statistical_syncdecode.py [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE]  
+  ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--segformat]
+  [--lm_predictors=LM_TYPES] [--lm_path=LM_PATHS] [--lm_order=LM_ORDERS]
+  [--lm_weights=LM_WEIGHTS]
   
 Arguments:
-  ED_MODEL_FOLDER  ED model(s) folder, possibly relative to RESULTS_FOLDER, coma-separated
+  ED_MODEL_FOLDER  ED model(s) folder, possibly relative to RESULTS_FOLDER, comma-separated
   MODEL_FOLDER     results folder, possibly relative to RESULTS_FOLDER
 
 Options:
@@ -18,10 +20,10 @@ Options:
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --segformat                   format of the segmentation input file (3 cols)
-  --lm_predictors		comma-separated type of the provided language models. E.g.: srilm_char, srilm_morph for SRILM character language model or SRILM morpheme language model 
-  --lm_path			comma-separated paths of the language models in the same order as described in --lm_predictors
-  --lm_order			comma-separated orders of each of the language models in the same order as described in --lm_predictors
-  --lm_weights			comma-separated weights of the language models in the same order as described in --lm_predictors
+  --lm_predictors=LM_TYPES	comma-separated type of the provided language models. E.g.: srilm_char, srilm_morph for SRILM character language model or SRILM morpheme language model 
+  --lm_path=LM_PATHS		comma-separated paths of the language models in the same order as described in lm_predictors
+  --lm_order=LM_ORDERS		comma-separated orders of each of the language models in the same order as described in lm_predictors
+  --lm_weights=LM_WEIGHTS	comma-separated weights of the language models in the same order as described in lm_predictors
 """
 
 from __future__ import division
@@ -49,19 +51,50 @@ from norm_soft import log_to_file, SoftDataSet, SoftAttention
 from statistical_lm import SRILM_char_lm_loader, SRILM_morpheme_lm_loader
 MAX_PRED_SEQ_LEN = 50 # option
 
-def _compute_scores(lm_models, lm_states, lm_weights, BOUNDARY, STOP, UNK, segment, eow=False):
+def _compute_scores(lm_models, lm_states, lm_weights, segment, nmt_vocab, STOP, BOUNDARY, UNK, eow=False):
     """compute scores of model ensemble """
-    lm_total_score=0
     
+    lm_scores = []
     for i,(m,s) in enumerate(zip(lm_models,lm_states)):
-        if m.__name__ == 'SRILM_morph_lm_loader':
-            segment_id = m.vocab.w2i.get(segment, UNK)
-            m.set_state(s)
-            lm_score = m.score()
-            s=m.get_state())
-        elif m.__name__ == 'SRILM_char_lm_loader':
-            
-    return lm_total_score, lm_states
+    	# the segment is a morpheme
+	if m.__class__.__name__ == 'SRILM_morpheme_lm_loader':
+		#segment=" ".join([str(s) for s in segment])
+		print "morpheme:", segment
+		m.set_state(s)
+		lm_score = m.score(segment)
+		m.consume(segment)
+		print "morpheme score:", lm_score
+		lm_scores.append((lm_score * lm_weights[i]))
+		s = m.get_state()
+
+	# the segment is a character
+        elif m.__class__.__name__ == 'SRILM_char_lm_loader':
+		temp_lm_score = 0
+		new_state=s
+		print segment
+		segment = [nmt_vocab.w2i.get(c, UNK) for c in segment]
+		print segment
+	
+		for c in segment:
+			m.set_state(new_state)
+			char_score = m.score(c)
+			m.consume(c)
+			temp_lm_score += char_score
+			new_state = m.get_state()
+			print char_score
+		m.set_state(new_state)
+		if eow:
+			charscore = m.score(STOP)
+			m.consume(STOP)
+		else:
+			charscore = m.score(BOUNDARY)
+			m.consume(BOUNDARY)
+		s=m.get_state()
+		temp_lm_score += char_score
+		
+		lm_scores.append( (temp_lm_score * lm_weights[i]))
+    print lm_scores
+    return lm_scores, lm_states
             
     
 def predict_syncbeam(input, nmt_models, lm_models, lm_weights, beam = 1):
@@ -75,11 +108,10 @@ def predict_syncbeam(input, nmt_models, lm_models, lm_weights, beam = 1):
     UNK       = nmt_vocab.w2i[UNK_CHAR]
     BOUNDARY = nmt_vocab.w2i[BOUNDARY_CHAR]
 
-    m_hypos = [([m.s for m in nmt_models],lm_models ,0., '', '')] # hypos to be expanded by morphemes
+    m_hypos = [([m.s for m in nmt_models],[[] for m in lm_models] ,0.,[0. for m in lm_models], '', '')] # hypos to be expanded by morphemes
     m_complete_hypos = [] # hypos which end with STOP
     m_pred_length = 0 # number of morphemes
 #        max_score = np.inf
-
     while m_pred_length <= MAX_PRED_SEQ_LEN and len(m_complete_hypos) < beam:# continue expansion while we don't have beam closed hypos #todo: MAX_PRED_SEQ_LEN should be changed to max morphemes number per word
         m_expansion = [] # beam * m_hypos expansion to be collected on the current iteration
         
@@ -90,37 +122,40 @@ def predict_syncbeam(input, nmt_models, lm_models, lm_weights, beam = 1):
         
             while pred_length <= MAX_PRED_SEQ_LEN and len(hypos) > 0: # continue expansion while there is a hypo to expand
                 expansion = [] # beam * m_hypos expansion to be collected on the current iteration
-                for s_nmt, s_lm, log_p, word, segment in hypos:
+                for s_nmt, s_lm, nmt_log_p, lm_log_p, word, segment in hypos:
                     log_probs = np.array([-dy.log_softmax(m.predict_next_(s, scores=True)).npvalue() for m,s in zip(nmt_models,s_nmt)])
 #                    print log_probs
                     log_probs = np.sum(log_probs, axis=0)
 #                    print log_probs
                     top = np.argsort(log_probs,axis=0)[:beam]
-                    expansion.extend(( (s_nmt, s_lm, log_p + log_probs[pred_id], copy.copy(word), copy.copy(segment), pred_id) for pred_id in top ))
+                    expansion.extend(( (s_nmt, s_lm, nmt_log_p + log_probs[pred_id], lm_log_p, copy.copy(word), copy.copy(segment), pred_id) for pred_id in top ))
                 hypos = []
                 expansion.extend(complete_hypos)
                 complete_hypos = []
                 expansion.sort(key=lambda e: e[2])
-                print u'expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),log_p) for _,_,log_p,w,_,pred_id in expansion[:beam]])
+                print u'expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),nmt_log_p,lm_log_p) for _,_,nmt_log_p,lm_log_p,w,_,pred_id in expansion[:beam]])
                 for e in expansion[:beam]:
-                    s_nmt, s_lm, log_p, word, segment, pred_id = e
+                    s_nmt, s_lm, nmt_log_p, lm_log_p, word, segment, pred_id = e
                     if pred_id == STOP:
-                        lm_score= _compute_scores(s_lm, lm_weights, segment, UNK, eow=True)
+                        lm_score,s_lm = _compute_scores(lm_models, s_lm, lm_weights, segment, nmt_vocab, STOP, BOUNDARY, UNK, eow=True)
 #                            if log_p < max_score:
 #                                max_score = max(max_score,log_p)
-                        complete_hypos.append((s_nmt, s_lm, log_p+lm_score, word, segment, pred_id))
+			complete_hypos.append((s_nmt, s_lm, nmt_log_p,np.array(lm_log_p)+np.array(lm_score), word, segment, pred_id))
                     elif pred_id == BOUNDARY:
-                        lm_score= _compute_scores(s_lm, lm_weights, segment, UNK, eow=False)
-                        complete_hypos.append((s_nmt, s_lm, log_p+lm_score, word, segment, pred_id))
+                        lm_score,s_lm = _compute_scores(lm_models, s_lm,lm_weights, segment, nmt_vocab, STOP,BOUNDARY, UNK, eow=False)
+			complete_hypos.append((s_nmt, s_lm, nmt_log_p, np.array(lm_log_p)+np.array(lm_score), word, segment, pred_id))
                     else:
                         pred_char = nmt_vocab.i2w.get(pred_id,UNK_CHAR)
                         word+=pred_char
                         segment+=pred_char
-                        new_lm_states = []
-                        for m in s_lm:
-                            new_lm_states.append(m.consume(m.vocab.w2i.get(pred_char, UNK)))
+			#segment_id+=pred_id
+                        new_lm_states = s_lm
+                        for m,s in zip(lm_models,new_lm_states):
+			    m.set_state(s)
+			    m.consume(pred_id)
+                            s=m.get_state()
                         
-			hypos.append(([m.consume(s,pred_id) for m,s in zip(nmt_models,s_nmt)],new_lm_states, log_p, word, segment))
+			hypos.append(([m.consume_next_(s, pred_id) for m,s in zip(nmt_models,s_nmt)],new_lm_states, nmt_log_p,lm_log_p,word, segment))
                 pred_length += 1
             m_expansion.extend(complete_hypos)
 
@@ -128,29 +163,31 @@ def predict_syncbeam(input, nmt_models, lm_models, lm_weights, beam = 1):
         m_expansion.extend(m_complete_hypos)
         m_complete_hypos = []
         m_expansion.sort(key=lambda e: e[2])
-#        print u'm_expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),log_p) for _,_,log_p,w,_,pred_id in m_expansion[:beam]])
+        print u'm_expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),nmt_log_p,lm_log_p) for _,_,nmt_log_p,lm_log_p,w,_,pred_id in m_expansion[:beam]])
         for e in m_expansion[:beam]:
-            s_nmt, s_lm, log_p, word, segment, pred_id = e
+            s_nmt, s_lm, nmt_log_p,lm_log_p, word, segment, pred_id = e
             if pred_id == STOP:
                 m_complete_hypos.append(e)
             else: #BOUNDARY
-                pred_char = nmt_vocab.i2w.get(pred_id,UNK_CHAR)
+                pred_char = nmt_vocab.i2w.get(pred_id, UNK_CHAR)
                 word+=pred_char
                 new_lm_states = []
-                for m in s_lm:
-			new_lm_states.append(m.consume(m.vocab.w2i.get(nmt_vocab.i2w[pred_id], UNK)))
+                for m,s in zip(lm_models,s_lm):
+			m.set_state(s)
+			m.consume(pred_id)
+			new_lm_states.append(m.get_state())
                     
-                m_hypos.append(([m.consume_next_(s,pred_id) for m,s in zip(nmt_models,s_nmt)],new_lm_states, log_p, word,''))
+                m_hypos.append(([m.consume_next_(s,pred_id) for m,s in zip(nmt_models,s_nmt)],new_lm_states, nmt_log_p,lm_log_p, word,''))
         m_pred_length += 1
             
     if not m_complete_hypos:
         # nothing found
-        m_complete_hypos = [(log_p, word) for s_nmt, s_lm, log_p, word, _ in m_hypos]
+        m_complete_hypos = [(nmt_log_p, word) for s_nmt, s_lm, nmt_log_p, lm_log_p, word, _ in m_hypos]
             
-    m_complete_hypos.sort(key=lambda e: e[2])
+    m_complete_hypos.sort(key=lambda e: e[2]+sum(e[3]))
     final_hypos = []
-    for _,_, log_p, word,_,_ in m_complete_hypos[:beam]:
-        final_hypos.append((log_p, word))
+    for _,_, nmt_log_p,lm_log_p, word,_,_ in m_complete_hypos[:beam]:
+        final_hypos.append((nmt_log_p,lm_log_p, word))
     return final_hypos
 
 def evaluate_syncbeam(data, ed_models, lm_models, lm_weights, beam):
@@ -185,7 +222,7 @@ if __name__ == "__main__":
     print 'Loading data...'
     test_path = check_path(arguments['--test_path'], '--test_path')
     data_set = SoftDataSet
-    three_col_format = True if arguments['--segformat'] else False
+    three_col_format = (0,2) if arguments['--segformat'] else False
     test_data = data_set.from_file(test_path,three_col_format)
     print 'Test data has {} examples'.format(test_data.length)
     
@@ -229,14 +266,14 @@ if __name__ == "__main__":
 		zip(\
 		    arguments['--lm_predictors'].split(','),\
 		    arguments["--lm_path"].split(','),\
-		    arguments["--lm_order"].split(',')\
+		    [int(o) for o in arguments["--lm_order"].split(',')]\
 		)):
         print '...Loading lm model {}'.format(i)
         lm_model_folder =  check_path(path, 'LM_MODEL_FOLDER_{}'.format(i), is_data_path=False)
 	if lm_type=="srilm_char":
         	lm_model =  SRILM_char_lm_loader(path, order)
 	elif lm_type=="srilm_morph":
-		lm_model = SRILM_morph_lm_loader(path,order)
+		lm_model = SRILM_morpheme_lm_loader(path,order)
 	else:
 		print "WARNING -- Could not load language model. Unknown type",lm_type,". Use 'srilm_char' or 'srilm_morph'"
         lm_models.append(lm_model)
@@ -247,7 +284,7 @@ if __name__ == "__main__":
     # save best dev model parameters and predictions
     print 'Evaluating on test..'
     t = time.clock()
-    accuracy, test_results = evaluate_syncbeam(test_data.iter(), ed_models, lm_models, lm_weights, int(arguments['--beam']))
+    accuracy, test_results = evaluate_syncbeam(test_data.iter(indices=[0]), ed_models, lm_models, lm_weights, int(arguments['--beam']))
     print 'Time: {}'.format(time.clock()-t)
     print 'accuracy: {}'.format(accuracy)
     write_pred_file(output_file_path, test_results)
