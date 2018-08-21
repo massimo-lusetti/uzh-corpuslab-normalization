@@ -196,7 +196,7 @@ def evaluate_syncbeam(data, ed_models, lm_models, lm_weights, beam):
     final_results = []
     for i,(input,output) in enumerate(data):
         predictions = predict_syncbeam(input, ed_models, lm_models, lm_weights, beam)
-        prediction = predictions[0][1]
+        prediction = predictions[0][2]
         if prediction == output.lower():
             correct += 1
         else:
