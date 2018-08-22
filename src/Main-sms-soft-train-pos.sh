@@ -1,66 +1,59 @@
 #!/bin/bash
-# Usage Main-sms-soft-train-pos.sh
-# ./Main-sms-soft-train-pos.sh norm_soft
-# ./Main-sms-soft-train-pos.sh norm_soft_pos
-# ./Main-sms-soft-train-pos.sh norm_soft_context
+# Usage Main-sms-soft-train-pos.sh model_file_name data_folder use_aux_loss
+# ./Main-sms-soft-train-pos.sh norm_soft SMS/POS
+# ./Main-sms-soft-train-pos.sh norm_soft_pos SMS/POS
+# ./Main-sms-soft-train-pos.sh norm_soft_context SMS/POS
+# ./Main-sms-soft-train-pos.sh norm_soft_context SMS/POS aux
 ##########################################################################################
 
 
-export TRAIN=SMS/POS/train.txt
-export DEV=SMS/POS/dev.txt
-export TEST=SMS/POS/test.txt
+export TRAIN=$2/train.txt
+export DEV=$2/dev.txt
+export TEST=$2/test.txt
 
 export MODEL=$1
+if [[ $3 == "aux" ]]; then
+export PR="sms_aux"
+else
 export PR="sms"
+fi
 echo "$PR"
 
 ########### SEED 1 + eval
-#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 11 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=30 --lowercase
+if [[ $3 == "aux" ]]; then
+PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=30 --lowercase --aux_pos_task
+elif [[ $2 == "norm_soft_pos" ]]; then
+PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=30 --lowercase --pos_split_space
+else
+PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=30 --lowercase
+fi
 
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
+PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
 
+PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
 
 ########### SEED >1 + eval
 ## the vocabulary of SEED 0 is used for other models in ensemble
 #for (( k=2; k<=5; k++ ))
 #do
 #(
-#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=20 --vocab_path=${PR}_${MODEL}_1/vocab.txt  --lowercase
+#if [[ $3 == "aux" ]]; then
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=30 --lowercase --aux_pos_task --vocab_path=${PR}_${MODEL}_1/vocab.txt
+#elif [[ $2 == "norm_soft_pos" ]]; then
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=30 --lowercase --pos_split_space --vocab_path=${PR}_${MODEL}_1/vocab.txt
+#else
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=30 --lowercase --vocab_path=${PR}_${MODEL}_1/vocab.txt
+#fi
+
 ##
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
 #PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
 #)
 #done
 
 
-########### Evaluate NMT
+########### Evaluate ensemble 5
 
-#for (( k=1; k<=5; k++ ))
-#do
-#(
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=1 --pred_path=best.dev.1  --lowercase &
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=1 --pred_path=best.test.1  --lowercase&
-#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
-#) &
-#done
-
-########### Evaluate NMT ensemble 3
-
-#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$DEV --beam=1 --pred_path=best.dev.1 ${PR}_${MODEL}_ens3  --lowercase &
-#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_${MODEL}_ens3  --lowercase &
-#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$TEST --beam=1 --pred_path=best.test.1 ${PR}_${MODEL}_ens3   --lowercase&
-#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_${MODEL}_ens3  --lowercase &
-
-########### Evaluate NMT ensemble 5
-
-#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$DEV --beam=1 --pred_path=best.dev.1 ${PR}_${MODEL}_ens5  --lowercase &
 #PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_${MODEL}_ens5  --lowercase &
-#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$TEST --beam=1 --pred_path=best.test.1 ${PR}_${MODEL}_ens5   --lowercase &
 #PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_${MODEL}_ens5  --lowercase &
 

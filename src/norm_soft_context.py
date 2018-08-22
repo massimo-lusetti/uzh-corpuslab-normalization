@@ -5,7 +5,7 @@
 Usage:
   norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
     [--char_input=CHAR_INPUT] [--word_input=WORD_INPUT] [--feat_input=FEAT_INPUT] [--hidden=HIDDEN] [--hidden_context=HIDDEN_CONTEXT] [--layers=LAYERS] [--char_vocab_path=VOCAB_PATH_CHAR] [--feat_vocab_path=VOCAB_PATH_FEAT] [--word_vocab_path=VOCAB_PATH_WORD]
-    [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
+    [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION] [--aux_pos_task] [--aux_weight=AUX_WEIGHT]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
     MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
@@ -41,7 +41,9 @@ Options:
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
   --lowercase                   use lowercased data [default: False]
-  --pos_split_space             use space sign to split POS tag features, the default is '+'
+  --pos_split_space             use space to split POS tag features, the default is '+'
+  --aux_pos_task                use auxilary task to predict POS tag
+  --aux_weight=AUX_WEIGH        weight of auxilary loss [default: 0.2]
 """
 
 from __future__ import division
@@ -65,7 +67,7 @@ from vocab_builder import build_vocabulary, Vocab
 from norm_soft import SoftDataSet
 
 MAX_PRED_SEQ_LEN = 50 # option
-OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #common
+OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, alpha=0.0001, #common
                                                    beta_1=0.9, beta_2=0.999, eps=1e-8),
     'SGD'     : dy.SimpleSGDTrainer,
         'ADADELTA': dy.AdadeltaTrainer}
@@ -125,7 +127,8 @@ def load_data_pos(filename, input_format, lowercase=False, split_by_space=False)
 #                    print splt
                     inputs.append(splt[input_col].lower() if lowercase else splt[input_col])
                     outputs.append(splt[output_col].lower() if lowercase else splt[output_col])
-                    features.append(splt[feat_col].split() if split_by_space else splt[feat_col].split('+'))
+                    features.append(splt[feat_col])
+#                    features.append(splt[feat_col].split() if split_by_space else splt[feat_col].split('+'))
                 except:
                     print u"bad line: {}, {}".format(i,line)
             else:
@@ -224,19 +227,25 @@ class SoftAttention(object):
         self.UNK_WORD  = self.word_vocab.w2i[UNK_CHAR]
         self.hyperparams['VOCAB_SIZE_CHAR'] = self.char_vocab.size()
         self.hyperparams['VOCAB_SIZE_WORD'] = self.word_vocab.size()
-        
-        self.build_model(pc, best_model_path)
+        self.hyperparams['VOCAB_SIZE_FEAT'] = self.feat_vocab.size()
         
         print 'Model Hypoparameters:'
         for k, v in self.hyperparams.items():
             print '{:20} = {}'.format(k, v)
         print
         
+        print self.hyperparams['AUX_POS_TASK']
+        
+        self.build_model(pc, best_model_path)
+        
     def build_model(self, pc, best_model_path):
         
         if best_model_path:
             print 'Loading model from: {}'.format(best_model_path)
-            self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.WORD_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a = dy.load(best_model_path, pc)
+            if not self.hyperparams['AUX_POS_TASK']:
+                self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.WORD_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a = dy.load(best_model_path, pc)
+            else:
+                self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.WORD_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a, self.R_pos, self.bias_pos, self.W_c_pos = dy.load(best_model_path, pc)
         else:
             # BiLSTM for input
             self.fbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM_CHAR'], self.hyperparams['HIDDEN_DIM'], pc)
@@ -261,12 +270,10 @@ class SoftAttention(object):
             self.R = pc.add_parameters((self.hyperparams['VOCAB_SIZE_CHAR'], 3 * self.hyperparams['HIDDEN_DIM'] + 2 * self.hyperparams['HIDDEN_DIM_CONTEXT']))
             self.bias = pc.add_parameters(self.hyperparams['VOCAB_SIZE_CHAR'])
             
-            # attention MLPs - Loung-style with extra v_a from Bahdanau
-            
-            # concatenation layer for h (hidden dim), c (2 * hidden_dim)
+            # concatenation layer
             self.W_c = pc.add_parameters((3 * self.hyperparams['HIDDEN_DIM'] + 2 * self.hyperparams['HIDDEN_DIM_CONTEXT'], 3 * self.hyperparams['HIDDEN_DIM'] + 2 * self.hyperparams['HIDDEN_DIM_CONTEXT']))
             
-            # attention MLP's - Bahdanau-style
+            # attention MLPs - Loung-style with extra v_a from Bahdanau
             # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
             self.W__a = pc.add_parameters((self.hyperparams['HIDDEN_DIM'], self.hyperparams['HIDDEN_DIM']))
             
@@ -275,23 +282,35 @@ class SoftAttention(object):
             
             # concatenation layer for h_input (2*hidden_dim), h_output (hidden_dim)
             self.v__a = pc.add_parameters((1, self.hyperparams['HIDDEN_DIM']))
-        
+            
+            if self.hyperparams['AUX_POS_TASK']:
+                # softmax parameters - auxiliry pos tagging task
+                self.R_pos = pc.add_parameters((self.hyperparams['VOCAB_SIZE_FEAT'], 2 * self.hyperparams['HIDDEN_DIM_CONTEXT']))
+                self.bias_pos = pc.add_parameters(self.hyperparams['VOCAB_SIZE_FEAT'])
+                
+                # concatenation layer - auxiliry pos tagging task
+                self.W_c_pos = pc.add_parameters(( 2 * self.hyperparams['HIDDEN_DIM_CONTEXT'],  2 * self.hyperparams['HIDDEN_DIM_CONTEXT']))
         
         print 'Model dimensions:'
         print ' * VOCABULARY CHAR EMBEDDING LAYER: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['VOCAB_SIZE_CHAR'], self.hyperparams['INPUT_DIM_CHAR'])
         print ' * VOCABULARY WORD EMBEDDING LAYER: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['VOCAB_SIZE_WORD'], self.hyperparams['INPUT_DIM_WORD'])
 #        print ' * FEATURES VOCABULARY EMBEDDING LAYER: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['FEAT_VOCAB_SIZE'], self.hyperparams['FEAT_INPUT_DIM'])
         print
-        print ' * ENCODER biLSTM: IN-DIM: {}, OUT-DIM: {}'.format(2*self.hyperparams['INPUT_DIM_CHAR'], 2*self.hyperparams['HIDDEN_DIM'])
+        print ' * CONTEXT ENCODER biLSTM: IN-DIM: {}, OUT-DIM: {}'.format(4*self.hyperparams['HIDDEN_DIM']+self.hyperparams['INPUT_DIM_WORD'], self.hyperparams['HIDDEN_DIM_CONTEXT'])
         print ' * DECODER LSTM: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['INPUT_DIM_CHAR'], self.hyperparams['HIDDEN_DIM'])
+        print ' * ENCODER LSTM: IN-DIM: {}, OUT-DIM: {}'.format(self.hyperparams['INPUT_DIM_CHAR'], self.hyperparams['HIDDEN_DIM'])
         print ' All LSTMs have {} layer(s)'.format(self.hyperparams['LAYERS'])
         print
         print ' * SOFTMAX: IN-DIM: {}, OUT-DIM: {}'.format(3 * self.hyperparams['HIDDEN_DIM'] + 2 *self.hyperparams['HIDDEN_DIM_CONTEXT'], self.hyperparams['VOCAB_SIZE_CHAR'])
+        if self.hyperparams['AUX_POS_TASK']:
+            print ' * POS SOFTMAX: IN-DIM: {}, OUT-DIM: {}'.format(2 * self.hyperparams['HIDDEN_DIM_CONTEXT'], self.hyperparams['VOCAB_SIZE_FEAT'])
         print
 
     def save_model(self, best_model_path):
-        dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.WORD_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a])
-
+        if not self.hyperparams['AUX_POS_TASK']:
+            dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.WORD_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a])
+        else:
+            dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.WORD_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a, self.R_pos, self.bias_pos, self.W_c_pos])
 
     def bilstm_transduce(self, encoder_frnn, encoder_rrnn, input_char_vecs):
         
@@ -349,48 +368,54 @@ class SoftAttention(object):
             input_emb_context.append(dy.concatenate([word_embedding, word_char_encoding[0], word_char_encoding[-1]]))
 
         self.bicontext = self.bilstm_transduce(self.fbuffRNN_cont, self.bbuffRNN_cont, input_emb_context)
+        
+        if self.hyperparams['AUX_POS_TASK']:
+            R_pos = dy.parameter(self.R_pos)
+            bias_pos = dy.parameter(self.bias_pos)
+            W_c_pos = dy.parameter(self.W_c_pos)
+            self.cg_params_pos = (R_pos, bias_pos, W_c_pos)
     
     def reset_decoder(self):
         self.s = self.decoder.initial_state()
         self.s = self.s.add_input(self.CHAR_VOCAB_LOOKUP[self.BEGIN])
 
-    def predict_next(self, pos, scores=False, hidden =False):
+    def predict_next(self, position, scores=False):
         (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
 
         # soft attention vector
-        att_scores = [v__a * dy.tanh(W__a * self.s.output() + U__a * h_input) for h_input in self.biencoder[pos]]
+        att_scores = [v__a * dy.tanh(W__a * self.s.output() + U__a * h_input) for h_input in self.biencoder[position]]
         alphas = dy.softmax(dy.concatenate(att_scores))
-        c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder[pos])])
+        c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder[position])])
             
         # softmax over vocabulary
-        h_output = dy.tanh(W_c * dy.concatenate([self.s.output(), c, self.bicontext[pos]]))
-        if not hidden:
-            if not scores:
-                return dy.softmax(R * h_output + bias)
-            else:
-                return R * h_output + bias
-        else:
-            return h_output
+        h_output = dy.tanh(W_c * dy.concatenate([self.s.output(), c, self.bicontext[position]]))
 
-    def predict_next_(self, state, pos, scores=False, hidden=False):
+        if not scores:
+            return dy.softmax(R * h_output + bias)
+        else:
+            return R * h_output + bias
+
+    def predict_next_(self, state, position, scores=False):
         (R, bias, W_c, W__a, U__a, v__a) = self.cg_params
         
         # soft attention vector
-        att_scores = [v__a * dy.tanh(W__a * state.output() + U__a * h_input) for h_input in self.biencoder[pos]]
+        att_scores = [v__a * dy.tanh(W__a * state.output() + U__a * h_input) for h_input in self.biencoder[position]]
         alphas = dy.softmax(dy.concatenate(att_scores))
-        c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder[pos])])
+        c = dy.esum([h_input * dy.pick(alphas, j) for j, h_input in enumerate(self.biencoder[position])])
         
         # softmax over vocabulary
-        h_output = dy.tanh(W_c * dy.concatenate([state.output(), c, self.bicontext[pos]]))
-        if not hidden:
-            if not scores:
-    #            print 'probs:'
-                return dy.softmax(R * h_output + bias)
-            else:
-    #            print 'scores:'
-                return R * h_output + bias
+        h_output = dy.tanh(W_c * dy.concatenate([state.output(), c, self.bicontext[position]]))
+        if not scores:
+#            print 'probs:'
+            return dy.softmax(R * h_output + bias)
         else:
-            return h_output
+#            print 'scores:'
+            return R * h_output + bias
+
+    def predict_pos(self, pos):
+        (R_pos, bias_pos, W_c_pos) = self.cg_params_pos
+        h_output_pos = dy.tanh(W_c_pos * self.bicontext[pos])
+        return dy.softmax(R_pos * h_output_pos + bias_pos)
 
     def consume_next(self, pred_id):
         self.s = self.s.add_input(self.CHAR_VOCAB_LOOKUP[pred_id])
@@ -399,19 +424,43 @@ class SoftAttention(object):
         new_state = state.add_input(self.CHAR_VOCAB_LOOKUP[pred_id])
         return new_state
 
-    def train(self, inputs, _true_outputs):
-
+    def train_aux(self, inputs, _true_outputs, pos_features, aux_weight):
         self.param_init(inputs)
-        
+        sent_losses = 0
+        #        print 'new sent'
+        for position,(input,_true_output, pos_feature) in enumerate(zip(inputs, _true_outputs, pos_features)):
+            self.reset_decoder()
+            true_output = [self.char_vocab.w2i[a] for a in _true_output]
+            true_output += [self.STOP]
+            
+            losses = []
+            for pred_id in true_output:
+                probs = self.predict_next(position)
+                losses.append(-dy.log(dy.pick(probs, pred_id)))
+                self.consume_next(pred_id)
+            total_word_loss = dy.average(losses)
+            
+            pos_feature_id = self.feat_vocab.w2i[pos_feature]
+            probs_pos = self.predict_pos(position)
+            pos_loss = -dy.log(dy.pick(probs_pos, pos_feature_id))
+                               
+            sent_losses = sent_losses + total_word_loss + dy.scalarInput(aux_weight) * pos_loss
+        #            import pdb; pdb.set_trace()
+        #            print input, sent_losses.value()
+        #        total_sent_loss = dy.esum(sent_losses) #if len(sent_losses)>1 else sent_losses[0]
+        return sent_losses
+            
+    def train_unsup(self, inputs, _true_outputs, *args):
+        self.param_init(inputs)
         sent_losses = 0
 #        print 'new sent'
-        for pos,(input,_true_output) in enumerate(zip(inputs, _true_outputs)):
+        for position,(input,_true_output) in enumerate(zip(inputs, _true_outputs)):
             self.reset_decoder()
             true_output = [self.char_vocab.w2i[a] for a in _true_output]
             true_output += [self.STOP]
             losses = []
             for pred_id in true_output:
-                probs = self.predict_next(pos)
+                probs = self.predict_next(position)
                 losses.append(-dy.log(dy.pick(probs, pred_id)))
                 self.consume_next(pred_id)
             total_word_loss = dy.average(losses)
@@ -458,7 +507,7 @@ class SoftAttention(object):
         args = args[np.argsort(flatten[args])]
         return np.unravel_index(args, matrix.shape), flatten[args]
 
-    def predict(self, input, pos, beam_size, ignore_first_eol=False, as_arrays=False):
+    def predict(self, input, position, beam_size, ignore_first_eol=False, predict_pos=False):
         """Performs beam search.
             If the beam search was not compiled, it also compiles it.
             Parameters
@@ -499,7 +548,7 @@ class SoftAttention(object):
         
             # We carefully hack values of the `logprobs` array to ensure
             # that all finished sequences are continued with `eos_symbol`.
-            logprobs = np.array([-dy.log_softmax(self.predict_next_(s, pos, scores=True)).npvalue() for s in states])
+            logprobs = np.array([-dy.log_softmax(self.predict_next_(s, position, scores=True)).npvalue() for s in states])
 #            print logprobs
 #            print all_masks[-1, :, None]
             next_costs = (all_costs[-1, :, None] + logprobs * all_masks[-1, :, None]) #take last row of cumul prev costs and turn into beam_size X 1 matrix, take logprobs distributions for unfinished hypos only and add it (elem-wise) with the array of prev costs; result: beam_size x vocab_len matrix of next costs
@@ -529,9 +578,13 @@ class SoftAttention(object):
         all_masks = all_masks[1:-1] #? all_masks[:-1] # skipping first row of self.BEGIN and the last row of self.STOP
         all_costs = all_costs[1:] - all_costs[:-1] #turn cumulative cost ito cost of each step #?actually the last row would suffice for us?
         result = all_outputs, all_masks, all_costs
-        if as_arrays:
-            return result
-        return self.result_to_lists(self.char_vocab,result)
+        if not predict_pos:
+             return self.result_to_lists(self.char_vocab,result)
+        else:
+            log_probs =  dy.log(self.predict_pos(position))
+            pred_pos_id = np.argmax(log_probs.npvalue())
+            pred_pos_tag = self.feat_vocab.i2w.get(pred_pos_id, UNK_CHAR)
+            return pred_pos_tag, self.result_to_lists(self.char_vocab,result)
     
     @staticmethod
     def result_to_lists(vocab, result):
@@ -543,9 +596,10 @@ class SoftAttention(object):
         results.sort(key=lambda h: h[0])
         return results
 
-    def evaluate(self, data, beam):
+    def evaluate(self, data, beam, predict_pos=False):
         # data is a list of tuples (an instance of SoftDataSet with iter method applied)
         correct = 0.
+        correct_tag = 0
         final_results = []
         data_len = 0
         for i,sent in enumerate(data):
@@ -554,26 +608,36 @@ class SoftAttention(object):
             inputs,outputs,features = sent
             self.param_init(inputs)
             
-            for pos,(input,output) in enumerate(zip(inputs,outputs)):
+            for position,(input,output,feature) in enumerate(zip(inputs,outputs,features)):
                 data_len += 1
-                predictions = self.predict(input, pos, beam)
+                if not predict_pos:
+                    predictions = self.predict(input, position, beam)
+                else:
+                    pos_tag,predictions = self.predict(input, position, beam, predict_pos = True)
+                    if pos_tag == feature:
+                        correct_tag +=1
                 prediction = predictions[0][1]
             #            print i, input, predictions
                 if prediction == output:
                     correct += 1
 #                    print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
 #                    print predictions
-                else:
-                    print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
-                    print predictions
+#                else:
+#                    print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+#                    print predictions
                 final_results.append((input,prediction))  # pred expected as list
         accuracy = correct / data_len
-        return accuracy, final_results
+        if not predict_pos:
+            return accuracy, final_results
+        else:
+            accuracy_tag = correct_tag / data_len
+            return accuracy_tag, accuracy, final_results
 
 
-def evaluate_ensemble(nmt_models, data, beam):
+def evaluate_ensemble(nmt_models, data, beam, predict_pos=False):
     # data is a list of tuples (an instance of SoftDataSet with iter method applied)
     correct = 0.
+    correct_tag = 0
     final_results = []
     data_len = 0
     for i,sent in enumerate(data):
@@ -583,9 +647,14 @@ def evaluate_ensemble(nmt_models, data, beam):
         for m in nmt_models:
             m.param_init(inputs)
     
-        for pos,(input,output) in enumerate(zip(inputs,outputs)):
+        for position,(input,output,feature) in enumerate(zip(inputs,outputs,features)):
             data_len += 1
-            predictions = predict_ensemble(nmt_models, input, pos, beam)
+            if not predict_pos:
+                predictions = predict_ensemble(nmt_models, input, position, beam)
+            else:
+                pos_tag,predictions = predict_ensemble(nmt_models, input, position, beam, predict_pos = True)
+                if pos_tag == feature:
+                    correct_tag +=1
             prediction = predictions[0][1]
         #            print i, input, predictions
             if prediction == output:
@@ -595,10 +664,14 @@ def evaluate_ensemble(nmt_models, data, beam):
 #            print predictions
             final_results.append((input,prediction))  # pred expected as list
     accuracy = correct / data_len
-    return accuracy, final_results
+    if not predict_pos:
+        return accuracy, final_results
+    else:
+        accuracy_tag = correct_tag / data_len
+        return accuracy_tag, accuracy, final_results
 
 
-def predict_ensemble(nmt_models, input, pos, beam_size, ignore_first_eol=False, as_arrays=False):
+def predict_ensemble(nmt_models, input, position, beam_size, ignore_first_eol=False, predict_pos=False):
     """Performs beam search for ensemble of models.
     If the beam search was not compiled, it also compiles it.
     Parameters
@@ -645,7 +718,7 @@ def predict_ensemble(nmt_models, input, pos, beam_size, ignore_first_eol=False, 
         # that all finished sequences are continued with `eos_symbol`.
         logprobs_lst = []
         for j,m in enumerate(nmt_models):
-            logprobs_m = np.array([-dy.log_softmax(m.predict_next_(s, pos, scores=True)).npvalue() for s in states[j]]) # beam_size x vocab_len matrix
+            logprobs_m = np.array([-dy.log_softmax(m.predict_next_(s, position, scores=True)).npvalue() for s in states[j]]) # beam_size x vocab_len matrix
         #            print logprobs
         #            print all_masks[-1, :, None]
             next_costs = (all_costs[-1, :, None] + logprobs_m * all_masks[-1, :, None]) #take last row of cumul prev costs and turn into beam_size X 1 matrix, take logprobs distributions for unfinished hypos only and add it (elem-wise) with the array of prev costs; result: beam_size x vocab_len matrix of next costs
@@ -703,9 +776,16 @@ def predict_ensemble(nmt_models, input, pos, beam_size, ignore_first_eol=False, 
     all_masks = all_masks[1:-1] #? all_masks[:-1] # skipping first row of self.BEGIN and the last row of self.STOP
     all_costs = all_costs[1:] - all_costs[:-1] #turn cumulative cost ito cost of each step #?actually the last row would suffice for us?
     result = all_outputs, all_masks, all_costs
-    if as_arrays:
-        return result
-    return result_to_lists(nmt_vocab, result)
+    if not predict_pos:
+        return result_to_lists(nmt_vocab, result)
+    else:
+        logprobs_pos = []
+        for j,m in enumerate(nmt_models):
+            logprobs_pos.append(np.array([-dy.log(m.predict_pos(position)).npvalue()]))
+        logprobs = np.sum(logprobs_lst, axis=0)
+        pred_pos_id = np.argmax(logprobs.npvalue())
+        pred_pos_tag = self.feat_vocab.i2w.get(pred_pos_id, UNK_CHAR)
+        return pred_pos_tag, self.result_to_lists(self.char_vocab,result)
 
 def result_to_lists(nmt_vocab, result):
     outputs, masks, costs = [array.T for array in result]
@@ -772,7 +852,7 @@ if __name__ == "__main__":
                 feat_vocab_path = os.path.join(model_folder,arguments['--feat_vocab_path']) # no vocab - use default name
                 print 'Building features vocabulary..'
                 data = train_data.features
-                build_vocabulary(data, feat_vocab_path)
+                build_vocabulary(data, feat_vocab_path, over_words=True)
 
         if os.path.exists(arguments['--word_vocab_path']):
                 word_vocab_path = arguments['--word_vocab_path'] # absolute path  to existing vocab file
@@ -801,11 +881,17 @@ if __name__ == "__main__":
                             'LAYERS': int(arguments['--layers']),
                             'WORD_VOCAB_PATH': word_vocab_path,
                             'CHAR_VOCAB_PATH': char_vocab_path,
-                            'FEAT_VOCAB_PATH': feat_vocab_path}
+                            'FEAT_VOCAB_PATH': feat_vocab_path,
+                            'AUX_POS_TASK': arguments['--aux_pos_task']}
     
         print 'Building model...'
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams)
+
+        if arguments ['--aux_pos_task']:
+            training_mode = ti.train_aux
+        else:
+            training_mode = ti.train_unsup
 
         # Training hypoparameters
         train_hyperparams = {'MAX_PRED_SEQ_LEN': MAX_PRED_SEQ_LEN,
@@ -815,7 +901,8 @@ if __name__ == "__main__":
                             'DROPOUT': float(arguments['--dropout']),
                             'BEAM_WIDTH': 1,
                             'TRAIN_PATH': train_path,
-                            'DEV_PATH': dev_path}
+                            'DEV_PATH': dev_path,
+                            'AUX_WEIGHT': float(arguments['--aux_weight'])}
 
         print 'Train Hypoparameters:'
         for k, v in train_hyperparams.items():
@@ -847,7 +934,7 @@ if __name__ == "__main__":
                 train_len += len(inputs)
                 # new graph for each sentence
                 dy.renew_cg()
-                loss = ti.train(inputs,outputs)
+                loss = training_mode(inputs, outputs, features, train_hyperparams['AUX_WEIGHT'])
 #                if loss is not None:
                 train_loss += loss.scalar_value()
                 loss.backward()
@@ -861,14 +948,20 @@ if __name__ == "__main__":
             print 'evaluating on train...'
             dy.renew_cg() # new graph for all the examples
             then = time.time()
-            train_accuracy, _ = ti.evaluate(train_data.iter(indices=sanity_set_size), int(arguments['--beam']))
+            if not arguments ['--aux_pos_task']:
+                train_accuracy, _ = ti.evaluate(train_data.iter(indices=sanity_set_size), int(arguments['--beam']))
+            else:
+                train_acc_tag, train_accuracy, _ = ti.evaluate(train_data.iter(indices=sanity_set_size), int(arguments['--beam']), predict_pos=True )
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
             
             # get dev accuracy
             print 'evaluating on dev...'
             then = time.time()
             dy.renew_cg() # new graph for all the examples
-            dev_accuracy, _ = ti.evaluate(dev_data.iter(), int(arguments['--beam']))
+            if not arguments ['--aux_pos_task']:
+                dev_accuracy, _ = ti.evaluate(dev_data.iter(), int(arguments['--beam']))
+            else:
+                dev_acc_tag, dev_accuracy, _ = ti.evaluate(dev_data.iter(), int(arguments['--beam']), predict_pos=True)
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
 
             if dev_accuracy > best_dev_accuracy:
@@ -885,10 +978,17 @@ if __name__ == "__main__":
                 train_progress_bar.finish()
                 break
 
-            print ('epoch: {0} train loss: {1:.4f} dev accuracy: {2:.4f} '
+            if not arguments ['--aux_pos_task']:
+                print ('epoch: {0} train loss: {1:.4f} dev accuracy: {2:.4f} '
                    'train accuracy: {3:.4f} best dev accuracy: {4:.4f} patience = {5}').format(epoch, avg_train_loss, dev_accuracy, train_accuracy, best_dev_accuracy, patience)
+                log_to_file(log_file_name, epoch, avg_train_loss, train_accuracy, dev_accuracy)
+            else:
+                print ('epoch: {0} train loss: {1:.4f} dev accuracy: {2:.4f} '
+                       'train accuracy: {3:.4f} best dev accuracy: {4:.4f} train accuracy tag: {5:.4f} dev accuracy tag: {6:.4f} patience = {7}').format(epoch, avg_train_loss, dev_accuracy, train_accuracy, best_dev_accuracy, train_acc_tag, dev_acc_tag, patience)
+                log_to_file(log_file_name, epoch, avg_train_loss, train_accuracy, dev_accuracy)
+                log_to_file(log_file_name, epoch, avg_train_loss, train_acc_tag, dev_acc_tag)
 
-            log_to_file(log_file_name, epoch, avg_train_loss, train_accuracy, dev_accuracy)
+
 
             if patience == train_hyperparams['PATIENCE']:
                 print 'out of patience after {} epochs'.format(epoch)
@@ -938,7 +1038,9 @@ if __name__ == "__main__":
                             'LAYERS': int(hyperparams_dict['LAYERS']),
                             'WORD_VOCAB_PATH': hyperparams_dict['WORD_VOCAB_PATH'],
                             'CHAR_VOCAB_PATH': hyperparams_dict['CHAR_VOCAB_PATH'],
-                            'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
+                            'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH'],
+                            'AUX_POS_TASK': True if hyperparams_dict['AUX_POS_TASK']=="True" else False}
+
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
@@ -985,7 +1087,8 @@ if __name__ == "__main__":
                             'LAYERS': int(hyperparams_dict['LAYERS']),
                             'WORD_VOCAB_PATH': hyperparams_dict['WORD_VOCAB_PATH'],
                             'CHAR_VOCAB_PATH': hyperparams_dict['CHAR_VOCAB_PATH'],
-                            'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
+                            'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH'],
+                            'AUX_POS_TASK': True if hyperparams_dict['AUX_POS_TASK']=="True" else False}
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             

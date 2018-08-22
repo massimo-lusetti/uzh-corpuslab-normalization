@@ -38,7 +38,7 @@ Options:
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
   --lowercase                   use lowercased data [default: False]
-  --pos_split_space              use plus sign to split POS tag features
+  --pos_split_space             use space to split POS tag features, the default is '+'
 """
 
 from __future__ import division
