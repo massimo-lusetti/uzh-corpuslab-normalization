@@ -1,6 +1,6 @@
 #!/bin/bash
-# Usage: ./Main-eng-dynet.sh ResultsFolderName NMT_ENSEMBLES BEAM MODEL_TYPE
-# Usage: ./Main-eng-dynet.sh eng 1 3 -nmt
+# Usage: ./Main-eng-sync.sh ResultsFolderName NMT_ENSEMBLES BEAM MODEL_TYPE
+# Usage: ./Main-eng-sync.sh eng 1 3 -nmt
 
 ###########################################
 ## POINTERS TO WORKING AND DATA DIRECTORIES
@@ -13,7 +13,7 @@ export DIR=/home/tanja/uzh-corpuslab-normalization
 export DATA=$DIR/data/canonical-segmentation/english
 export EXTRADATA=/$DIR/data/canonical-segmentation/additional/eng/aspell.txt
 
-export SCRIPTS=/home/tanja/Normalization-sgnmt/scripts-dynet-segmentation #TBC
+export SCRIPTS=$DIR/src/scripts #TBC
 
 export SEGM=/home/christof/Chintang/uzh-corpuslab-morphological-segmentation/SEGM
 
@@ -40,8 +40,8 @@ for (( n=0; n<=0; n++ )) #data split (from 0 till 9)
 do
 
 (
-mkdir -p $DIR/results/{PF}/$n
-export RESULTS_ALL=$DIR/results/{PF}/$n
+mkdir -p $DIR/results/${PF}/$n
+export RESULTS_ALL=$DIR/results/${PF}/$n
 
 export TRAINDATA=$DATA/train$n
 export DEVDATA=$DATA/dev$n
@@ -51,11 +51,11 @@ nmt_predictors="nmt"
 
 mkdir -p $RESULTS_ALL/${NMT_SEED}
 export RESULTS=$RESULTS_ALL/${NMT_SEED}
-nmt_path="--nmt_path=$MODEL/${PF}_${n}_nmt_${NMT_SEED}" #temporary over nmt models
+nmt_path="$MODEL/${PF}_${n}_nmt_${NMT_SEED}" #temporary over nmt models
 
 # Prepare target and source dictionaries
-cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $EXPER_DATA/vocab.trg
-cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $EXPER_DATA/vocab.src
+cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $RESULTS/vocab.trg
+cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $RESULTS/vocab.src
 
 
 #
@@ -66,15 +66,15 @@ cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $EXPER_DATA/vocab.src
 
 # Prepare train set (charcter based - add spaces)
 cut -f1 $TRAINDATA > $RESULTS/train.src
-cut -f2 $TRAINDATA > $RESULTS/train.trg
+cut -f3 $TRAINDATA > $RESULTS/train.trg
 
 # Prepare test set (charcter based - add spaces)
 cut -f1 $TESTDATA > $RESULTS/test.src
-cut -f2 $TESTDATA > $RESULTS/test.trg
+cut -f3 $TESTDATA > $RESULTS/test.trg
 
 # Prepare validation set (charcter based - add spaces)
 cut -f1 $DEVDATA > $RESULTS/dev.src
-cut -f2 $DEVDATA > $RESULTS/dev.trg
+cut -f3 $DEVDATA > $RESULTS/dev.trg
 
 ##########################################
 # TRAINING NMT
@@ -92,10 +92,8 @@ elif [[ $4 == "-nmt" ]]; then # Only evaluate ensembles of nmt models
 
 echo "TO BE REPLACED WITH DYNET EVAL"
 
-PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $DEVDATA $TRAINDATA $RESULTS/dev_out_vanilla.txt $RESULTS/dev.src $RESULTS/Errors_vanilla_dev.txt > $RESULTS/Accuracy_vanilla_dev_det.txt #TBC
-
 # evaluate on tokens - detailed output
-PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $TESTDATA $TRAINDATA $RESULTS/test_out_vanilla.txt $RESULTS/test.src $RESULTS/Errors_vanilla_test.txt > $RESULTS/Accuracy_vanilla_test_det.txt #TBC
+PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $TESTDATA $TRAINDATA $RESULTS/test_out_vanilla.txt  $RESULTS/Errors_vanilla_test.txt > $RESULTS/Accuracy_vanilla_test_det.txt #TBC
 
 else # nmt + LM
 
@@ -107,7 +105,7 @@ else # nmt + LM
 if [[ $4 == *"e"* ]]; then
 
 # Prepare extended training target file
-cut -f2 $EXTRADATA > $RESULTS/extra.train.trg
+cut -f1 $EXTRADATA > $RESULTS/extra.train.trg
 # Extend training set
 cat $RESULTS/train.trg $RESULTS/extra.train.trg > $RESULTS/train_ext.trg
 # train LM
@@ -115,7 +113,7 @@ cat $RESULTS/train.trg $RESULTS/extra.train.trg > $RESULTS/train_ext.trg
 
 else
 # train LM
-(ngram-count -text $RESULTS/train_ext.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train_ext.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train_ext.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
+(ngram-count -text $RESULTS/train.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
 
 fi
 
@@ -125,13 +123,13 @@ fi
 ##########################################
 #
 # Prepare extended training target file
-cut -f2 $EXTRADATA > $RESULTS/extra.train.trg
+cut -f1 $EXTRADATA > $RESULTS/extra.train.trg
 
 # Prepare LM train file with chars masked by int using NMT target chars2int dictionary
-python2.7 $SCRIPTS/apply_wmap.py -m $RESULTS/vocab.trg < $RESULTS/extra.train.trg > $RESULTS/extra.train.itrg
+python2.7 $SCRIPTS/apply_wmap.py -m $RESULTS/vocab.trg --low < $RESULTS/extra.train.trg > $RESULTS/extra.train.itrg
 
 # train LM
-(ngram-count -text $EXPER_DATA/extra.train.itrg -lm $EXPER_DATA/chars.lm -order 7 -write $EXPER_DATA/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $EXPER_DATA/extra.train.itrg -lm $EXPER_DATA/chars.lm -order 7 -write $EXPER_DATA/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $EXPER_DATA/extra.train.itrg -lm $EXPER_DATA/chars.lm -order 7 -write $EXPER_DATA/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
+(ngram-count -text $RESULTS/extra.train.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/extra.train.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/extra.train.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
 
 
 
@@ -153,18 +151,17 @@ cd $MERTEXPER
 # NMT + Language Model over chars
 if [[ $4 == "-c" ]]; then
 # passed to zmert: commands to decode n-best list from dev file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,srilmchar --decoder syncbeam $nmt_path --srilmchar_path=$EXPER_DATA/chars.lm --srilmchar_order=7 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/dev.src --outputs=nbest --nbest=0 --output_path=nbest.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd
+#echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --segformat --test_path=canonical-segmentation/english/dev0 --pred_path=nbest.out --lm_predictors=srilm_char --lm_order=7 --lm_path=$RESULTS/chars.lm --format=1"
+echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --segformat --test_path=canonical-segmentation/english/dev0 --pred_path=$MERTEXPER/nbest.out --lm_predictors=srilm_char --lm_order=7 --lm_path=$RESULTS/chars.lm --format=1"> SDecoder_cmd
 
 # passed to zmert: commands to decode 1-best list from test file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,srilmchar --decoder syncbeam $nmt_path --srilmchar_path=$EXPER_DATA/chars.lm --srilmchar_order=7 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/test.src --outputs=text --output_path=test.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd_test
+echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --segformat --test_path=canonical-segmentation/english/test0 --pred_path=$MERTEXPER/test.out --lm_predictors=srilm_char --lm_order=7 --lm_path=$RESULTS/chars.lm" > SDecoder_cmd_test
 
-nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
+#nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
 #echo $nmt_w
-while read num; do nmt_weights+="nmt$num $nmt_w\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\n${nmt_weights}lm 0.001" > SDecoder_cfg.txt
+echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\nnmt 1\nlm 0.001" > SDecoder_cfg.txt
 
-while read num; do nmt_params+="nmt$num\t|||\t${nmt_w}\tFix\t0\t+1\t0\t+1\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "${nmt_params}lm\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
+echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
 
 
 
@@ -263,17 +260,17 @@ java -cp $MERT/lib/zmert.jar ZMERT -maxMem 500 ZMERT_cfg.txt
 
 ## copy test out file - for analysis
 cp test.out $RESULTS/test_out_mert.txt
+cp test.out.eval $RESULTS/test.eval
 #
 ## copy n-best file for dev set with optimal weights - for analysis
 cp nbest.out $RESULTS/nbest_dev_mert.out
+cp nbest.out.eval $RESULTS/dev.eval
 #
 cp SDecoder_cfg.txt.ZMERT.final $RESULTS/params-mert-ens.txt
 #
-##evaluate on tokens
-PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-only.py $RESULTS/test_out_mert.txt  $EXPER_DATA/test.trg > $RESULTS/Accuracy_mert_test.txt #TBC
 #
-##evaluate on tokens - detailed output
-PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $TESTDATA $TRAINDATA $RESULTS/test_out_mert.txt $EXPER_DATA/test.src $RESULTS/Errors_mert_test.txt > $RESULTS/Accuracy_mert_test_det.txt #TBC
+##evaluate on tokens - detailed output for the test set
+PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $TESTDATA $TRAINDATA $RESULTS/test_out_mert.txt  $RESULTS/Errors_mert_test.txt > $RESULTS/Accuracy_mert_test_det.txt #TBC
 
 
 #rm -r $MERTEXPER

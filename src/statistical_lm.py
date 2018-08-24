@@ -6,17 +6,24 @@ class SRILM_char_lm_loader(object):
 		self.lm_path = model_path
 		self.order=order
 		self.history=[]
-                self.EOS_ID = 1
+		self.EOS_ID = 1
 		self.history_len = order-1
-                self.lm = initLM(order)
-                readLM(self.lm, self.lm_path)
-                self.vocab_size = howManyNgrams(self.lm, 1)
+		print u'Initialize LM with order {}'.format(order)
+		self.lm = initLM(order)
+		readLM(self.lm, self.lm_path)
+		self.vocab_size = howManyNgrams(self.lm, 1)
+    
+	def param_init(self):
+		"""Initializes the history with the start-of-sentence symbol."""
+		self.history = ['<s>'] if self.history_len > 0 else []
+        
 	
 	def score(self, char):
 		"""retrieve the probability of a sequence from the language model
 		 based on the current history"""
 		prefix = "%s " % ' '.join(self.history)
 		order = len(self.history) + 1
+#		print u'history, scoring with lm: {}, {}'.format(prefix,prefix + ("</s>" if char == self.EOS_ID else str(char)))
 		
 		ret = getNgramProb(self.lm, prefix + ("</s>" if char == self.EOS_ID else str(char)), order)
 		return ret

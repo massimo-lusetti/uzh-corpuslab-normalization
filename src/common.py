@@ -34,14 +34,23 @@ def check_path(path, arg_name, is_data_path=True): #common
                 path = tmp
     return path
 
-def write_pred_file(output_file_path, final_results):
-    
-    predictions_path = output_file_path + '.predictions'
+def write_pred_file(output_file_path, final_results, format = 0):
     
     print 'len of predictions is {}'.format(len(final_results))
-    with codecs.open(predictions_path, 'w', encoding='utf8') as predictions:
-        for input, prediction in final_results:
-            predictions.write(u'{0}\t{1}\n'.format(input, prediction))
+    if format == 0:
+        predictions_path = output_file_path
+        with codecs.open(predictions_path, 'w', encoding='utf8') as predictions:
+            for input, prediction in final_results:
+                predictions.write(u'{}\t{}\n'.format(input, prediction))
+    elif format == 1:
+        id = 0
+        predictions_path = output_file_path
+        with codecs.open(predictions_path, 'w', encoding='utf8') as predictions:
+            for input, beam_predictions  in final_results:
+                for beam_prediction in beam_predictions:
+                    nmt_score,lm_scores,prediction, weighted_score = beam_prediction
+                    predictions.write(u'{} ||| {} ||| {} ||| {}\n'.format(id, prediction, u' '.join([str(-nmt_score)] + [str(-s) for s in lm_scores]), -weighted_score))
+                id +=1
 
     return
 
