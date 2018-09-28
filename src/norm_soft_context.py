@@ -3,13 +3,13 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
+  norm_soft_context.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
     [--char_input=CHAR_INPUT] [--word_input=WORD_INPUT] [--feat_input=FEAT_INPUT] [--hidden=HIDDEN] [--hidden_context=HIDDEN_CONTEXT] [--layers=LAYERS] [--char_vocab_path=VOCAB_PATH_CHAR] [--feat_vocab_path=VOCAB_PATH_FEAT] [--word_vocab_path=VOCAB_PATH_WORD]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION] [--aux_pos_task] [--aux_weight=AUX_WEIGHT]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
-  norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
+  norm_soft_context.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
     MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
-  norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
+  norm_soft_context.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
     ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
     
 
@@ -252,8 +252,8 @@ class SoftAttention(object):
             self.bbuffRNN  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], self.hyperparams['INPUT_DIM_CHAR'], self.hyperparams['HIDDEN_DIM'], pc)
             
             # BiLSTM for context
-            self.fbuffRNN_cont  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], 4*self.hyperparams['HIDDEN_DIM']+self.hyperparams['INPUT_DIM_WORD'], self.hyperparams['HIDDEN_DIM_CONTEXT'], pc)
-            self.bbuffRNN_cont  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], 4*self.hyperparams['HIDDEN_DIM']+self.hyperparams['INPUT_DIM_WORD'], self.hyperparams['HIDDEN_DIM_CONTEXT'], pc)
+            self.fbuffRNN_cont  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], 2*self.hyperparams['HIDDEN_DIM']+self.hyperparams['INPUT_DIM_WORD'], self.hyperparams['HIDDEN_DIM_CONTEXT'], pc)
+            self.bbuffRNN_cont  = dy.CoupledLSTMBuilder(self.hyperparams['LAYERS'], 2*self.hyperparams['HIDDEN_DIM']+self.hyperparams['INPUT_DIM_WORD'], self.hyperparams['HIDDEN_DIM_CONTEXT'], pc)
             
             # embedding lookups for vocabulary (chars)
             self.CHAR_VOCAB_LOOKUP  = pc.add_lookup_parameters((self.hyperparams['VOCAB_SIZE_CHAR'], self.hyperparams['INPUT_DIM_CHAR']))
@@ -388,9 +388,10 @@ class SoftAttention(object):
     
             word_id = self.word_vocab.w2i.get(_input, self.UNK_WORD)
             word_embedding = self.WORD_VOCAB_LOOKUP[word_id]
-            input_emb_context.append(dy.concatenate([word_embedding, word_char_encoding[0], word_char_encoding[-1]]))
+            word_char_encoding_context = self.bilstm_encode(self.fbuffRNN, self.bbuffRNN, input_emb)
+            input_emb_context.append(dy.concatenate([word_embedding, word_char_encoding_context]))
 
-        self.bicontext = self.bilstm_encode(self.fbuffRNN_cont, self.bbuffRNN_cont, input_emb_context)
+        self.bicontext = self.bilstm_transduce(self.fbuffRNN_cont, self.bbuffRNN_cont, input_emb_context)
         
         if self.hyperparams['AUX_POS_TASK']:
             R_pos = dy.parameter(self.R_pos)
