@@ -319,6 +319,7 @@ class SoftAttention(object):
             dy.save(best_model_path, [self.fbuffRNN, self.bbuffRNN, self.fbuffRNN_cont, self.bbuffRNN_cont, self.CHAR_VOCAB_LOOKUP, self.decoder, self.R, self.bias, self.W_c, self.W__a, self.U__a,  self.v__a, self.R_pos, self.bias_pos, self.W_c_pos])
 
     def bilstm_transduce(self, encoder_frnn, encoder_rrnn, input_char_vecs):
+        # returns the encoding for each element of the input sequence as a concat of the fwd and bwd LSTM-s
         
         # BiLSTM forward pass
         s_0 = encoder_frnn.initial_state()
@@ -342,6 +343,28 @@ class SoftAttention(object):
             blstm_outputs.append(dy.concatenate([frnn_outputs[i], rrnn_outputs[len(input_char_vecs) - i - 1]]))
         
         return blstm_outputs
+    
+    def bilstm_encode(self, encoder_frnn, encoder_rrnn, input_char_vecs):
+        # returns the encoding for the input sequence as a concat of the last fwd and last bwd LSTM-s vectors
+        
+        # BiLSTM forward pass
+        s_0 = encoder_frnn.initial_state()
+        s = s_0
+            for c in input_char_vecs:
+                s = s.add_input(c)
+        fwd = s.output()
+            
+        # BiLSTM backward pass
+        s_0 = encoder_rrnn.initial_state()
+        s = s_0
+        for c in reversed(input_char_vecs):
+            s = s.add_input(c)
+        bwd = s.output()
+
+        # BiLTSM output
+        blstm_output = dy.concatenate([fwd,bwd])
+
+        return blstm_output
 
     def param_init(self, inputs): #initialize parameters for current cg with the current input
     
