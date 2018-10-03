@@ -350,8 +350,8 @@ class SoftAttention(object):
         # BiLSTM forward pass
         s_0 = encoder_frnn.initial_state()
         s = s_0
-            for c in input_char_vecs:
-                s = s.add_input(c)
+        for c in input_char_vecs:
+            s = s.add_input(c)
         fwd = s.output()
             
         # BiLSTM backward pass
@@ -395,7 +395,7 @@ class SoftAttention(object):
 #            word_id = self.word_vocab.w2i.get(_input, self.UNK_WORD)
 #            word_embedding = self.WORD_VOCAB_LOOKUP[word_id]
 #            input_emb_context.append(dy.concatenate([word_embedding, word_char_encoding[0], word_char_encoding[-1]]))
-            input_emb_context = self.bilstm_encode(self.fbuffRNN, self.bbuffRNN, input_emb)
+            input_emb_context.append(self.bilstm_encode(self.fbuffRNN, self.bbuffRNN, input_emb))
  
         self.bicontext = self.bilstm_transduce(self.fbuffRNN_cont, self.bbuffRNN_cont, input_emb_context)
         

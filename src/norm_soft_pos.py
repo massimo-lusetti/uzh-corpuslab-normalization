@@ -807,7 +807,7 @@ if __name__ == "__main__":
             then = time.time()
             train_accuracy, _ = ti.evaluate(train_data.iter(indices=sanity_set_size), int(arguments['--beam']))
             print '\t...finished in {:.3f} sec'.format(time.time() - then)
-            
+
             # get dev accuracy
             print 'evaluating on dev...'
             then = time.time()
@@ -840,9 +840,9 @@ if __name__ == "__main__":
                 break
             # finished epoch
             train_progress_bar.update(epoch)
-                
+
         print 'finished training.'
-        
+
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
         dev_accuracy, dev_results = ti.evaluate(dev_data.iter(), int(arguments['--beam']))
         print 'Best dev accuracy: {}'.format(dev_accuracy)
