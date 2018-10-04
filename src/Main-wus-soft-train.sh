@@ -1,6 +1,6 @@
 #!/bin/bash
-# Usage Main-train-archi.sh
-# ./Main-train-archi.sh
+# Usage Main-wus-soft-train.sh
+# ./Main-wus-soft-train.sh
 ##########################################################################################
 
 
