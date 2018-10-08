@@ -14,23 +14,23 @@ export DEV=$2/dev_autopos.txt
 export TEST=$2/test_autopos.txt
 
 export MODEL=$1
-if [[ $3 == "aux" ]]; then
-export PR="wus_aux"
-elif [[ $3 == "pos" ]]; then
-export PR="wus_pos"
-elif [[ $3 == "pos_aux" ]]; then
-export PR="wus_pos_aux"
+if [[ $4 == "aux" ]]; then
+export PR="$3_aux"
+elif [[ $4 == "pos" ]]; then
+export PR="$3_pos"
+elif [[ $4 == "pos_aux" ]]; then
+export PR="$3_pos_aux"
 else
-export PR="wus"
+export PR=$3
 fi
 echo "$PR"
 
 ########### SEED 1 + eval
-if [[ $3 == "aux" ]]; then
+if [[ $4 == "aux" ]]; then
 PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=40 --lowercase --aux_pos_task
-elif [[ $3 == "pos" ]]; then
+elif [[ $4 == "pos" ]]; then
 PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=40 --lowercase --pos_feature
-elif [[ $3 == "pos_aux" ]]; then
+elif [[ $4 == "pos_aux" ]]; then
 PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=40 --lowercase --pos_feature --aux_pos_task
 
 elif [[ $1 == "norm_soft_pos" ]]; then
@@ -45,30 +45,30 @@ PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST
 
 ############ SEED >1 + eval
 ### the vocabulary of SEED 1 is used for other models in ensemble
-for (( k=2; k<=5; k++ ))
-do
-(
-if [[ $3 == "aux" ]]; then
-PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --aux_pos_task --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
-elif [[ $3 == "pos" ]]; then
-PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --pos_feature --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
-elif [[ $3 == "pos_aux" ]]; then
-PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --pos_feature --aux_pos_task --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
-
-elif [[ $1 == "norm_soft_pos" ]]; then
-PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --vocab_path=${PR}_${MODEL}_1/vocab.txt
-else
-PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
-fi
-
-PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
-PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
-) &
-done
-
+#for (( k=2; k<=5; k++ ))
+#do
+#(
+#if [[ $4 == "aux" ]]; then
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --aux_pos_task --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
+#elif [[ $4 == "pos" ]]; then
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --pos_feature --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
+#elif [[ $4 == "pos_aux" ]]; then
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --pos_feature --aux_pos_task --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
+#
+#elif [[ $1 == "norm_soft_pos" ]]; then
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --vocab_path=${PR}_${MODEL}_1/vocab.txt
+#else
+#PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
+#fi
+#
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
+#PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
+#) &
+#done
+#
 
 ############ Evaluate ensemble 5
-
-PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_${MODEL}_ens5  --lowercase
-PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_${MODEL}_ens5  --lowercase
-
+#
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$DEV --beam=3 --pred_path=best.dev.3 ${PR}_${MODEL}_ens5  --lowercase
+#PYTHONIOENCODING=utf8 python ${MODEL}.py ensemble_test ${PR}_${MODEL}_1,${PR}_${MODEL}_2,${PR}_${MODEL}_3,${PR}_${MODEL}_4,${PR}_${MODEL}_5 --test_path=$TEST --beam=3 --pred_path=best.test.3 ${PR}_${MODEL}_ens5  --lowercase
+#
