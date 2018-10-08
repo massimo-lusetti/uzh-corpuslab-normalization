@@ -8,9 +8,9 @@ Usage:
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION] [--aux_pos_task] [--aux_weight=AUX_WEIGHT] [--pos_feature]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft_char_context.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space] [--pos_feature]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
   norm_soft_char_context.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space] [--pos_feature]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
     
 
 Arguments:
@@ -1128,20 +1128,6 @@ if __name__ == "__main__":
     elif arguments['test']:
         print '=========EVALUATION ONLY:========='
         # requires test path, model path of pretrained path and results path where to write the results to
-        assert arguments['--test_path']!=None
-
-        print 'Loading data...'
-        test_path = check_path(arguments['--test_path'], '--test_path')
-        data_set = SoftDataSetFeat
-        input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
-        print 'Test data has {} examples'.format(test_data.length)
-
-        print 'Checking if any special symbols in data...'
-        data = set(test_data.inputs + test_data.outputs)
-        for c in [BEGIN_CHAR, STOP_CHAR, UNK_CHAR]:
-            assert c not in data
-        print 'Test data does not contain special symbols'
 
         best_model_path  = model_folder + '/bestmodel.txt'
         output_file_path = os.path.join(model_folder,arguments['--pred_path'])
@@ -1166,7 +1152,22 @@ if __name__ == "__main__":
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
+        assert arguments['--test_path']!=None
+        print 'Loading data...'
+        test_path = check_path(arguments['--test_path'], '--test_path')
+        data_set = SoftDataSetFeat
+        input_format = [int(col) for col in arguments['--input_format'].split(',')]
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], ti.hyperparams['POS_SPLIT_SPACE'])
+        print 'Test data has {} examples'.format(test_data.length)
+        
+        print 'Checking if any special symbols in data...'
+        data = set(test_data.inputs + test_data.outputs)
+        for c in [BEGIN_CHAR, STOP_CHAR, UNK_CHAR]:
+            assert c not in data
+        print 'Test data does not contain special symbols'
+
         print 'Evaluating on test..'
+
         t = time.clock()
         accuracy, test_results = ti.evaluate(test_data.iter(), int(arguments['--beam']))
         print 'Time: {}'.format(time.clock()-t)
@@ -1177,20 +1178,6 @@ if __name__ == "__main__":
     elif arguments['ensemble_test']:
         print '=========EVALUATION ONLY:========='
         # requires test path, model path of pretrained path and results path where to write the results to
-        assert arguments['--test_path']!=None
-        
-        print 'Loading data...'
-        test_path = check_path(arguments['--test_path'], '--test_path')
-        data_set = SoftDataSetFeat
-        input_format = [int(col) for col in arguments['--input_format'].split(',')]
-        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], arguments['--pos_split_space'])
-        print 'Test data has {} examples'.format(test_data.length)
-        
-        print 'Checking if any special symbols in data...'
-        data = set(test_data.inputs + test_data.outputs)
-        for c in [BEGIN_CHAR, STOP_CHAR, UNK_CHAR]:
-            assert c not in data
-        print 'Test data does not contain special symbols'
 
         pc = dy.ParameterCollection()
         ed_models= []
@@ -1222,6 +1209,20 @@ if __name__ == "__main__":
 
         ensemble_number = len(ed_models)
         output_file_path = os.path.join(model_folder,arguments['--pred_path'])
+
+        assert arguments['--test_path']!=None
+        print 'Loading data...'
+        test_path = check_path(arguments['--test_path'], '--test_path')
+        data_set = SoftDataSetFeat
+        input_format = [int(col) for col in arguments['--input_format'].split(',')]
+        test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'], ed_models[0].hyperparams['POS_SPLIT_SPACE'])
+        print 'Test data has {} examples'.format(test_data.length)
+        
+        print 'Checking if any special symbols in data...'
+        data = set(test_data.inputs + test_data.outputs)
+        for c in [BEGIN_CHAR, STOP_CHAR, UNK_CHAR]:
+            assert c not in data
+        print 'Test data does not contain special symbols'
 
         print 'Evaluating on test..'
         t = time.clock()
