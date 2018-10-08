@@ -39,6 +39,8 @@ else
 PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed 1 --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_1  --epochs=40 --lowercase
 fi
 
+wait
+
 PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
 
 PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
@@ -60,6 +62,8 @@ PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_1 --test_path=$TEST
 #else
 #PYTHONIOENCODING=utf8 python ${MODEL}.py train --dynet-seed $k --train_path=$TRAIN --dev_path=$DEV ${PR}_${MODEL}_$k  --epochs=40 --lowercase --char_vocab_path=${PR}_${MODEL}_1/char_vocab.txt --word_vocab_path=${PR}_${MODEL}_1/word_vocab.txt --feat_vocab_path=${PR}_${MODEL}_1/feat_vocab.txt
 #fi
+#
+#wait
 #
 #PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$DEV --beam=3 --pred_path=best.dev.3  --lowercase &
 #PYTHONIOENCODING=utf8 python ${MODEL}.py test ${PR}_${MODEL}_$k --test_path=$TEST --beam=3 --pred_path=best.test.3  --lowercase
