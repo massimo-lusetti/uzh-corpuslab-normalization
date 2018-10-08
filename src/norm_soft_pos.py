@@ -734,8 +734,6 @@ if __name__ == "__main__":
                 build_vocabulary(data, feat_vocab_path)
 
 
-
-
         # Paths for checks and results
         log_file_name   = model_folder + '/log.txt'
         best_model_path  = model_folder + '/bestmodel.txt'
@@ -876,10 +874,9 @@ if __name__ == "__main__":
         hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
         model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
                             'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
-                            #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                            'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                             'LAYERS': int(hyperparams_dict['LAYERS']),
             'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
-                'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                     'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
@@ -921,10 +918,9 @@ if __name__ == "__main__":
             hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
             model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
                 'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
-                    #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
+                    'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                     'LAYERS': int(hyperparams_dict['LAYERS']),
                         'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
-                        'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                         'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
