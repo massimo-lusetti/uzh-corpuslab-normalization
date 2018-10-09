@@ -682,7 +682,10 @@ class SoftAttention(object):
             inputs,outputs,features,features_in = sent
             self.param_init(inputs)
             if self.hyperparams['POS_FEATURE']:
-                self.param_init_feat_testtime(inputs)
+                if self.hyperparams['AUX_POS_TASK']:
+                    self.param_init_feat_testtime(inputs)
+                else:
+                    self.param_init_feat(features_in)
             
             for position,(input,output,feature) in enumerate(zip(inputs,outputs,features)):
                 data_len += 1
@@ -1023,7 +1026,7 @@ if __name__ == "__main__":
             avg_train_loss = 0.  # avg training loss
             
             train_len = 0
-            for i, sent in enumerate(train_data.iter(shuffle=False)):
+            for i, sent in enumerate(train_data.iter(indices=100,shuffle=False)):
                 inputs, outputs, features, features_in = sent
                 train_len += len(inputs)
                 # new graph for each sentence
