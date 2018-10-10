@@ -1051,7 +1051,7 @@ if __name__ == "__main__":
             avg_train_loss = 0.  # avg training loss
             
             train_len = 0
-            for i, sent in enumerate(train_data.iter(indices=100,shuffle=False)):
+            for i, sent in enumerate(train_data.iter(shuffle=False)):
                 inputs, outputs, features, features_in = sent
                 train_len += len(inputs)
                 # new graph for each sentence
