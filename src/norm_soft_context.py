@@ -727,7 +727,10 @@ def evaluate_ensemble(nmt_models, data, beam, predict_pos=False):
             m.param_init(inputs)
         if nmt_models[0].hyperparams['POS_FEATURE']:
             for m in nmt_models:
-                m.param_init_feat_testtime(inputs)
+                if nmt_models[0]..hyperparams['AUX_POS_TASK']:
+                    m.param_init_feat_testtime(inputs)
+                else:
+                    m.param_init_feat(features_in)
     
         for position,(input,output,feature) in enumerate(zip(inputs,outputs,features)):
             data_len += 1
