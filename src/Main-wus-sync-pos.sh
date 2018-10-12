@@ -22,7 +22,6 @@ export PF=$2
 export DIR=/home/tanja/uzh-corpuslab-normalization
 
 # data paths
-#export DATA=/data/wus/normalisation/btagger/
 export DATA=$DIR/data/wus/phase2/$1
 export EXTRADATA=/home/massimo/cmt/wus/sms_word_aligned_lc.txt
 export TRAINDATA=$DATA/train_silverpos.txt
@@ -38,7 +37,6 @@ export PATH=/home/christof/Chintang/SRILM/bin:/home/christof/Chintang/SRILM/bin/
 export MERT=/home/christof/Chintang/uzh-corpuslab-morphological-segmentation/zmert_v1.50
 
 #Pretrained NMT model
-#export MODEL=/mnt/results/normalisation/phase1
 export MODEL=$DIR/results/wus_phase2
 
 export BEAM=$5
@@ -128,7 +126,7 @@ if [[ $CONFIG == "train" ]]; then # Train nmt models
 
 elif [[ $CONFIG == "nmt" ]]; then # Only evaluate ensembles of nmt models
 
-#    PYTHONIOENCODING=utf8 python $DIR/src/${NMT_TYPE}.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS --input_format=${INPUT_FORMAT}
+    PYTHONIOENCODING=utf8 python $DIR/src/${NMT_TYPE}.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS --input_format=${INPUT_FORMAT}
 
     # evaluate on tokens - detailed output
     PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=${INPUT_FORMAT}
@@ -239,7 +237,7 @@ cp $RESULTS/test.src $MERTEXPER
 
 wait
 
-#java -cp $MERT/lib/zmert.jar ZMERT -maxMem 500 ZMERT_cfg.txt
+java -cp $MERT/lib/zmert.jar ZMERT -maxMem 500 ZMERT_cfg.txt
 
 ## copy test out file - for analysis
 cp test.out.predictions $RESULTS/test_out_mert.txt
