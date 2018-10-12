@@ -1,99 +1,129 @@
 #!/bin/bash
-# Usage: ./Main-eng-sync.sh ResultsFolderName NMT_ENSEMBLES BEAM MODEL_TYPE
-# Usage: ./Main-eng-sync.sh eng 1 3 -nmt
+# Usage: ./Main-eng-sync.sh DATA_PREFIX DATA_NAME NMT_ENSEMBLES BEAM MODEL_TYPE NMT_SEED(if not ensemble)
+# Usage: ./Main-eng-sync.sh eng english 1 3 wc 1
+
+#Configuration options:
+# w  - use lm over words(trained on the target data)
+# c  - use lm over chars(trained on the extra target data)
+# we - use lm over words(trained on the target and extra target data)
+# ce - use lm over chars(trained on the target and extra target data)
+# cw - use lm over words(trained on the target) and lm over chars(trained on the extra target data)
+# cwe - use lm over words(trained on the target and extra target data) and lm over chars(trained on the target and extra target data)
 
 ###########################################
 ## POINTERS TO WORKING AND DATA DIRECTORIES
 ###########################################
 #
 
-export PF="eng"
+export PF=$1
 export DIR=/home/tanja/uzh-corpuslab-normalization
 
-export DATA=$DIR/data/canonical-segmentation/english
-export EXTRADATA=/$DIR/data/canonical-segmentation/additional/eng/aspell.txt
-
-export SCRIPTS=$DIR/src/scripts #TBC
-
-export SEGM=/home/christof/Chintang/uzh-corpuslab-morphological-segmentation/SEGM
+# data paths
+export DATA=$DIR/data/canonical-segmentation/$2
+export EXTRADATA=/$DIR/data/canonical-segmentation/additional/${PF}/aspell.txt
 
 #LM paths
 export LD_LIBRARY_PATH=/home/christof/Chintang/swig-srilm:$LD_LIBRARY_PATH
 export PYTHONPATH=/home/christof/Chintang/swig-srilm:$PYTHONPATH
 export PATH=/home/christof/Chintang/SRILM/bin:/home/christof/Chintang/SRILM/bin/i686-m64:$PATH
-export MANPATH=/home/christof/Chintang/SRILM/man:$PATH
-
-export PATH=/home/christof/Chintang/swig:$PATH
 
 #MERT path
 export MERT=/home/christof/Chintang/uzh-corpuslab-morphological-segmentation/zmert_v1.50
 
 #Pretrained NMT model
-export MODEL=/mnt/results/
+export MODEL=/mnt/results/segm
 
+export BEAM=$4
 
-export NMT_SEED=$2
-export BEAM=$3
+export CONFIG=$5
 
 for (( n=0; n<=0; n++ )) #data split (from 0 till 9)
 
 do
-
-(
-mkdir -p $DIR/results/${PF}/$n
-export RESULTS_ALL=$DIR/results/${PF}/$n
-
-export TRAINDATA=$DATA/train$n
+# Data paths depend on the data split
+export TRAINDATA=$DATA/train${n}
 export DEVDATA=$DATA/dev$n
 export TESTDATA=$DATA/test$n
 
-nmt_predictors="nmt"
+(
 
-mkdir -p $RESULTS_ALL/${NMT_SEED}
-export RESULTS=$RESULTS_ALL/${NMT_SEED}
-nmt_path="$MODEL/${PF}_${n}_nmt_${NMT_SEED}" #temporary over nmt models
+# ensemble model
+if [ -z $6 ];
+then
+    export NMT_ENSEMBLES=$3
+
+    # results folder
+    mkdir -p $DIR/results/${PF}/ensemble/${CONFIG}/$n
+    export RESULTS=$DIR/results/${PF}/ensemble/${CONFIG}/$n
+
+    # pretrained models
+    nmt_predictors="nmt"
+    nmt_path="$MODEL/${PF}_${n}_nmt_1"
+    if [ $NMT_ENSEMBLES -gt 1 ]; then
+    while read num; do nmt_predictors+=",nmt"; done < <(seq $(($NMT_ENSEMBLES-1)))
+    while read num; do nmt_path+=",$MODEL/${PF}_${n}_nmt_$num"; done < <(seq 2 $NMT_ENSEMBLES)
+    fi
+    echo "$nmt_path"
+# individual model
+else
+    export NMT_SEED=$6
+
+    # results folder
+    mkdir -p $DIR/results/${PF}/individual/$n/${CONFIG}/${NMT_SEED}
+    export RESULTS=$DIR/results/${PF}/individual/$n/${CONFIG}/${NMT_SEED}
+
+    # pretrained models
+    nmt_predictors="nmt"
+    nmt_path="$MODEL/${PF}_${n}_nmt_${NMT_SEED}"
+    echo "$nmt_path"
+fi
+
+#
+###########################################
+## PREPARATION - src/trg splits and vocabulary
+###########################################
+#
 
 # Prepare target and source dictionaries
 cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $RESULTS/vocab.trg
 cp $MODEL/${PF}_${n}_nmt_1/vocab.txt $RESULTS/vocab.src
 
-
-#
-###########################################
-## PREPARATION - masking and vocabulary
-###########################################
-#
-
-# Prepare train set (charcter based - add spaces)
+# Prepare train set
 cut -f1 $TRAINDATA > $RESULTS/train.src
 cut -f3 $TRAINDATA > $RESULTS/train.trg
 
-# Prepare test set (charcter based - add spaces)
+# Prepare test set
 cut -f1 $TESTDATA > $RESULTS/test.src
 cut -f3 $TESTDATA > $RESULTS/test.trg
 
-# Prepare validation set (charcter based - add spaces)
+# Prepare validation set
 cut -f1 $DEVDATA > $RESULTS/dev.src
 cut -f3 $DEVDATA > $RESULTS/dev.trg
+
+# Prepare training target file based on the extra data
+cut -f1 $EXTRADATA > $RESULTS/extra.train.trg
+# Extend training set
+cat $RESULTS/train.trg $RESULTS/extra.train.trg > $RESULTS/train_ext.trg
+
 
 ##########################################
 # TRAINING NMT
 ##########################################
 
 ### TO BE REPLACED WITH DYNET TRAINING
-if [[ $4 == "-train" ]]; then # Train nmt models
-echo "TO BE REPLACED WITH DYNET TRAINING"
+if [[ $CONFIG == "train" ]]; then # Train nmt models
+    echo "TO BE REPLACED WITH DYNET TRAINING"
 
 ############################################
 # DECODING NMT + EVALUATION on dev and test
 ############################################
 
-elif [[ $4 == "-nmt" ]]; then # Only evaluate ensembles of nmt models
+elif [[ $CONFIG == "nmt" ]]; then # Only evaluate ensembles of nmt models
 
-echo "TO BE REPLACED WITH DYNET EVAL"
+    PYTHONIOENCODING=utf8 python $DIR/src/norm_soft.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS --input_format=0,2
 
-# evaluate on tokens - detailed output
-PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $TESTDATA $TRAINDATA $RESULTS/test_out_vanilla.txt  $RESULTS/Errors_vanilla_test.txt > $RESULTS/Accuracy_vanilla_test_det.txt #TBC
+    # evaluate on tokens - detailed output
+    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=0,2
 
 else # nmt + LM
 
@@ -101,19 +131,24 @@ else # nmt + LM
 # LM over words
 ##########################################
 
-# Use extra data for language model over words
-if [[ $4 == *"e"* ]]; then
+# Use target extended data for language model over words
+if [[ $CONFIG == *"e"* ]]; then
 
-# Prepare extended training target file
-cut -f1 $EXTRADATA > $RESULTS/extra.train.trg
-# Extend training set
-cat $RESULTS/train.trg $RESULTS/extra.train.trg > $RESULTS/train_ext.trg
-# train LM
-(ngram-count -text $RESULTS/train_ext.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train_ext.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train_ext.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
+    # Build vocab over morphemes
+    PYTHONIOENCODING=utf8  python vocab_builder.py build $RESULTS/train_ext.trg $RESULTS/morph_vocab.txt --segments
+    # Apply vocab mapping
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/train_ext.trg $RESULTS/morph_vocab.txt $RESULTS/train_ext.morph.itrg --segments
+    # train LM
+    (ngram-count -text $RESULTS/train_ext.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train_ext.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train_ext.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
 
+# Use only target train data for language model over words
 else
-# train LM
-(ngram-count -text $RESULTS/train.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train.trg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
+    # Build vocab over morphemes
+    PYTHONIOENCODING=utf8  python vocab_builder.py build $RESULTS/train.trg $RESULTS/morph_vocab.txt --segments
+    # Apply vocab mapping
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/train.trg $RESULTS/morph_vocab.txt $RESULTS/train.morph.itrg --segments
+    # train LM
+    (ngram-count -text $RESULTS/train.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
 
 fi
 
@@ -121,164 +156,101 @@ fi
 ##########################################
 # LM over chars
 ##########################################
-#
-# Prepare extended training target file
-cut -f1 $EXTRADATA > $RESULTS/extra.train.trg
 
-# Prepare LM train file with chars masked by int using NMT target chars2int dictionary
-python2.7 $SCRIPTS/apply_wmap.py -m $RESULTS/vocab.trg --low < $RESULTS/extra.train.trg > $RESULTS/extra.train.itrg
+# Use target extended data for language model over chars
+if [[ $CONFIG == *"e"* ]]; then
+    # Apply vocab mapping
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/train_ext.trg $RESULTS/vocab.trg $RESULTS/train_ext.char.itrg
+    # train LM
+    (ngram-count -text $RESULTS/train_ext.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train_ext.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train_ext.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
 
-# train LM
-(ngram-count -text $RESULTS/extra.train.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/extra.train.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/extra.train.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
+# Use only target train data for language model over chars
+else
+    # Apply vocab mapping
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/extra.train.trg $RESULTS/vocab.trg $RESULTS/extra.train.char.itrg
+    # train LM
+    (ngram-count -text $RESULTS/extra.train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/extra.train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/extra.train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
 
-
+fi
 
 ##########################################
 # MERT for NMT & LM + EVALUATION
 ##########################################
 
-##To make sure:
-# Change -r in ZMERT_cfg.txt to dev.trg
-
-
-cp -R $MERT/segm $RESULTS/mert$4${PF}$n${NMT_SEED}
-
-export MERTEXPER=$RESULTS/mert$4${PF}$n${NMT_SEED}
-
+mkdir $RESULTS/mert
+export MERTEXPER=$RESULTS/mert
 
 cd $MERTEXPER
 
 # NMT + Language Model over chars
-if [[ $4 == "-c" ]]; then
-# passed to zmert: commands to decode n-best list from dev file
-#echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --segformat --test_path=canonical-segmentation/english/dev0 --pred_path=nbest.out --lm_predictors=srilm_char --lm_order=7 --lm_path=$RESULTS/chars.lm --format=1"
-echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --segformat --test_path=canonical-segmentation/english/dev0 --pred_path=$MERTEXPER/nbest.out --lm_predictors=srilm_char --lm_order=7 --lm_path=$RESULTS/chars.lm --format=1"> SDecoder_cmd
+if [[ $CONFIG == "c" ]] || [[ $CONFIG == "ce" ]]; then
+    # passed to zmert: commands to decode n-best list from dev file
+    echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --test_path=$DEVDATA --pred_path=$MERTEXPER/nbest.out --lm_predictors=srilm_char --lm_orders=7 --lm_paths=$RESULTS/chars.lm --output_format=1 --input_format=0,2"> SDecoder_cmd
 
-# passed to zmert: commands to decode 1-best list from test file
-echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --segformat --test_path=canonical-segmentation/english/test0 --pred_path=$MERTEXPER/test.out --lm_predictors=srilm_char --lm_order=7 --lm_path=$RESULTS/chars.lm" > SDecoder_cmd_test
+    # passed to zmert: commands to decode 1-best list from test file
+    echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --test_path=$TESTDATA --pred_path=$MERTEXPER/test.out --lm_predictors=srilm_char --lm_orders=7 --lm_paths=$RESULTS/chars.lm --input_format=0,2" > SDecoder_cmd_test
 
-#nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
-#echo $nmt_w
-echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\nnmt 1\nlm 0.001" > SDecoder_cfg.txt
+    echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\nnmt 1\nlm 0.001" > SDecoder_cfg.txt
 
-echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
+    echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
 
-
-
-# NMT + Language Model over chars + length control
-elif [[ $4 == "-cL" ]]; then
-
-# passed to zmert: commands to decode n-best list from dev file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,wc,srilm --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --srilm_path=$EXPER_DATA/chars.lm --srilm_order=7 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/dev.src --outputs=nbest --nbest=0 --output_path=nbest.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd
-
-# passed to zmert: commands to decode 1-best list from test file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,wc,srilm --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --srilm_path=$EXPER_DATA/chars.lm --srilm_order=7 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/test.src --outputs=text --output_path=test.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd_test
-
-nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
-#echo $nmt_w
-while read num; do nmt_weights+="nmt$num $nmt_w\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\n${nmt_weights}wc 1.0\nlm 0.1" > SDecoder_cfg.txt
-
-while read num; do nmt_params+="nmt$num\t|||\t${nmt_w}\tFix\t0\t+1\t0\t+1\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "${nmt_params}wc\t|||\t1.0\tOpt\t0\t+Inf\t0\t+3\nlm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
 
 
 # NMT + Language Model over words
-elif [[ $4 == "-w" ]] || [[ $4 == "-we" ]]; then
-# passed to zmert: commands to decode n-best list from dev file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,word2char_srilm --decoder syncbeam $nmt_path  --word2char_map=$EXPER_DATA/vocab.m2c --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/dev.src --outputs=nbest --nbest=0 --output_path=nbest.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd
-
-# passed to zmert: commands to decode 1-best list from test file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,word2char_srilm --decoder syncbeam $nmt_path  --word2char_map=$EXPER_DATA/vocab.m2c --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/test.src --outputs=text --output_path=test.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd_test
-
-nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
-#echo $nmt_w
-while read num; do nmt_weights+="nmt$num $nmt_w\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\n${nmt_weights}lm 0.1" > SDecoder_cfg.txt
-
-while read num; do nmt_params+="nmt$num\t|||\t${nmt_w}\tFix\t0\t+1\t0\t+1\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "${nmt_params}lm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
-
-
-# NMT + Language Model over words  + length control
-elif [[ $4 == "-wL" ]] || [[ $4 == "-weL" ]]; then
-
+elif [[ $CONFIG == "w" ]] || [[ $CONFIG == "we" ]]; then
     # passed to zmert: commands to decode n-best list from dev file
-    echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,wc,word2char_srilm --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --word2char_map=$EXPER_DATA/vocab.m2c --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/dev.src --outputs=nbest --nbest=0 --output_path=nbest.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd
+    echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --test_path=$DEVDATA --pred_path=$MERTEXPER/nbest.out --lm_predictors=srilm_morph --lm_orders=3 --lm_paths=$RESULTS/morfs.lm --output_format=1 --input_format=0,2 --morph_vocab=$RESULTS/morph_vocab.txt"> SDecoder_cmd
 
     # passed to zmert: commands to decode 1-best list from test file
-    echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,wc,word2char_srilm --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --word2char_map=$EXPER_DATA/vocab.m2c --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/test.src --outputs=text --output_path=test.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd_test
+    echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --test_path=$TESTDATA --pred_path=$MERTEXPER/test.out --lm_predictors=srilm_morph --lm_orders=3 --lm_paths=$RESULTS/morfs.lm --input_format=0,2 --morph_vocab=$RESULTS/morph_vocab.txt" > SDecoder_cmd_test
 
-    nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
-    #echo $nmt_w
-    while read num; do nmt_weights+="nmt$num $nmt_w\n"; done < <(seq $NMT_ENSEMBLES)
-    echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\n${nmt_weights}wc 1.0\nlm 0.1" > SDecoder_cfg.txt
+    echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\nnmt 1\nlm 0.1" > SDecoder_cfg.txt
 
-    while read num; do nmt_params+="nmt$num\t|||\t${nmt_w}\tFix\t0\t+1\t0\t+1\n"; done < <(seq $NMT_ENSEMBLES)
-    echo -e "${nmt_params}wc\t|||\t1.0\tOpt\t0\t+Inf\t0\t+3\nlm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
+    echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
 
 
 # NMT + Language Model over chars + Language Model over words
-elif [[ $4 == "-cw" ]] || [[ $4 == "-cwe" ]]; then
-# passed to zmert: commands to decode n-best list from dev file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,word2char_srilm,srilmchar  --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --word2char_map=$EXPER_DATA/vocab.m2c --srilmchar_path=$EXPER_DATA/chars.lm --srilmchar_order=7 --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/dev.src --outputs=nbest --nbest=0 --output_path=nbest.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd
+elif [[ $CONFIG == "cw" ]] || [[ $CONFIG == "cwe" ]]; then
+    # passed to zmert: commands to decode n-best list from dev file
+    echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --test_path=$DEVDATA --pred_path=$MERTEXPER/nbest.out --lm_predictors=srilm_char,srilm_morph --lm_orders=7,3 --lm_paths=$RESULTS/chars.lm,$RESULTS/morfs.lm --output_format=1 --input_format=0,2 --morph_vocab=$RESULTS/morph_vocab.txt" > SDecoder_cmd
 
-# passed to zmert: commands to decode 1-best list from test file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,word2char_srilm,srilmchar --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --word2char_map=$EXPER_DATA/vocab.m2c --srilmchar_path=$EXPER_DATA/chars.lm --srilmchar_order=7 --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/test.src --outputs=text --output_path=test.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd_test
+    # passed to zmert: commands to decode 1-best list from test file
+    echo "PYTHONIOENCODING=utf8 python $DIR/src/statistical_syncdecode.py ${nmt_path} $RESULTS --beam=$BEAM --test_path=$TESTDATA --pred_path=$MERTEXPER/test.out --lm_predictors=srilm_char,srilm_morph --lm_orders=7,3 --lm_paths=$RESULTS/chars.lm,$RESULTS/morfs.lm --input_format=0,2 --morph_vocab=$RESULTS/morph_vocab.txt" > SDecoder_cmd_test
 
-nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
-#echo $nmt_w
-while read num; do nmt_weights+="nmt$num $nmt_w\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\n${nmt_weights}lm1 0.1\nlm2 0.001" > SDecoder_cfg.txt
+    echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\nnmt 1\nlm1 0.1\nlm2 0.001" > SDecoder_cfg.txt
 
-while read num; do nmt_params+="nmt$num\t|||\t${nmt_w}\tFix\t0\t+1\t0\t+1\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "${nmt_params}lm1\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nlm2\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
+    echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm1\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nlm2\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
 
+else
+ echo -e "Uknown configuration!"
 
-# NMT + Language Model over chars + Language Model over words  + length control
-elif [[ $4 == "-cwL" ]] || [[ $4 == "-cweL" ]]; then
-# passed to zmert: commands to decode n-best list from dev file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,wc,word2char_srilm,srilmchar  --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --word2char_map=$EXPER_DATA/vocab.m2c --srilmchar_path=$EXPER_DATA/chars.lm --srilmchar_order=7 --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/dev.src --outputs=nbest --nbest=0 --output_path=nbest.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd
-
-# passed to zmert: commands to decode 1-best list from test file
-echo "python $SEGM/decode_segm.py --predictors $nmt_predictors,wc,word2char_srilm,srilmchar --decoder syncbeam $nmt_path --nmt_config src_vocab_size=$SrcVocab,trg_vocab_size=$TrgVocab --word2char_map=$EXPER_DATA/vocab.m2c --srilmchar_path=$EXPER_DATA/chars.lm --srilmchar_order=7 --srilm_path=$EXPER_DATA/morfs.lm --srilm_order=3 --max_len_factor=3 --src_wmap=$EXPER_DATA/vocab.src --trg_wmap=$EXPER_DATA/vocab.trg --src_test=$EXPER_DATA/test.src --outputs=text --output_path=test.out --sync_symbol=$SyncSymbol --beam=$BEAM" > SDecoder_cmd_test
-
-nmt_w=$(echo "scale=2;1/$NMT_ENSEMBLES" | bc)
-#echo $nmt_w
-while read num; do nmt_weights+="nmt$num $nmt_w\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\n${nmt_weights}wc 1.0\nlm1 0.1\nlm2 0.001" > SDecoder_cfg.txt
-
-while read num; do nmt_params+="nmt$num\t|||\t${nmt_w}\tFix\t0\t+1\t0\t+1\n"; done < <(seq $NMT_ENSEMBLES)
-echo -e "${nmt_params}wc\t|||\t1.0\tOpt\t0\t+Inf\t0\t+3\nlm1\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nlm2\t|||\t0.001\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
 fi
 
-
+cp $DIR/src/ZMERT_cfg.txt $MERTEXPER
 cp $RESULTS/dev.trg $MERTEXPER
 cp $RESULTS/test.src $MERTEXPER
+
+wait
 
 java -cp $MERT/lib/zmert.jar ZMERT -maxMem 500 ZMERT_cfg.txt
 
 ## copy test out file - for analysis
-cp test.out $RESULTS/test_out_mert.txt
+cp test.out.predictions $RESULTS/test_out_mert.txt
 cp test.out.eval $RESULTS/test.eval
 #
 ## copy n-best file for dev set with optimal weights - for analysis
-cp nbest.out $RESULTS/nbest_dev_mert.out
+cp nbest.out.predictions $RESULTS/nbest_dev_mert.out
 cp nbest.out.eval $RESULTS/dev.eval
 #
 cp SDecoder_cfg.txt.ZMERT.final $RESULTS/params-mert-ens.txt
 #
 #
 ##evaluate on tokens - detailed output for the test set
-PYTHONIOENCODING=utf8 python2.7 $SCRIPTS/accuracy-det.py $TESTDATA $TRAINDATA $RESULTS/test_out_mert.txt  $RESULTS/Errors_mert_test.txt > $RESULTS/Accuracy_mert_test_det.txt #TBC
-
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=0,2
 
 #rm -r $MERTEXPER
 
 fi
-
-
-#rm -r $EXPER/exper_data
 
 echo "Process {$n} finished"
 )
