@@ -1,7 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*
+"""Builds vocabulary
 
-from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR
+Usage:
+  vocab_builder.py build [--input_col=COL] [--segments] [--vocab_trunk=VOCAB_TRUNK] [--lowercase=LOW]
+  DATA_PATH VOCAB_PATH
+  vocab_builder.py apply [--segments] [--lowercase=LOW]
+  DATA_PATH_IN VOCAB_PATH DATA_PATH_OUT
+  
+Arguments:
+  DATA_PATH     path to date
+  VOCAB_PATH    path to save vocab
+  DATA_PATH_IN  path to data to be converted with vocab mapping
+  DATA_PATH_OUT path to save converted data
+
+Options:
+  --vocab_trunk=VOCAB_TRUNK     precentage of vocabulary to be replaced with unk [default: 0]
+  --segments                    build vocabulary over segments instead of chars
+  --input_col=COL               input column [default: 0]
+  --lowercase=LOW               use lowercased data [default: True]
+ """
+
+from docopt import docopt
+from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR,BOUNDARY_CHAR, check_path
 import codecs
 import collections
 
@@ -42,20 +63,14 @@ class Vocab(object):
     
     def size(self): return len(self.w2i.keys())
 
-def build_vocabulary(train_data, vocab_path, vocab_trunk=0, over_words=False):
+def build_vocabulary(train_data, vocab_path, vocab_trunk=0):
     # Build vocabulary over items - chars or segments - and save it to 'vocab_path'
     
     if vocab_trunk==0:
-        if not over_words:
-            items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
-            print set([c for w in train_data for c in w])
-        else:
-            items = list(set(train_data))
+        items = list(set([c for w in train_data for c in w])) #+ [STOP_CHAR] + [UNK_CHAR] + [BEGIN_CHAR]
+#       print set([c for w in train_data for c in w])
     else:
-        if not over_words:
-            tokens = [c for w in train_data for c in w]
-        else:
-            tokens=train_data
+        tokens = [c for w in train_data for c in w]
         counter = collections.Counter(tokens)
         print u'Word types in train set: {}'.format(len(counter))
         n = len(counter) - int(len(counter)*vocab_trunk)
@@ -74,3 +89,69 @@ def build_vocabulary(train_data, vocab_path, vocab_trunk=0, over_words=False):
     vocab = Vocab.from_list(items,w2i)
     vocab.save(vocab_path)
     return
+
+def read(filename, input_col=0, over_segs=False, lowercase=False):
+    """
+        Read a file where each line is of the form "word1 word2 ..."
+        Yields lists of the lines from file
+    """
+    with codecs.open(filename, encoding='utf8') as fh:
+        for line in fh:
+            if not len(line.strip())==0:
+                try:
+                    splt = line.strip().split('\t')
+                    target = splt[input_col].lower() if lowercase else splt[input_col]
+                    #language model is trained on the target side of the corpus
+                    if over_segs:
+                        # Segments
+                        yield target.split(BOUNDARY_CHAR)
+                    else:
+                        # Chars
+                        yield [c for c in target]
+                except:
+                    print u"bad line: {}".format(line)
+
+def apply(file_in, file_out, vocab_path, over_segs=False, lowercase=False):
+    vocab = Vocab.from_file(vocab_path)
+    with codecs.open(file_in, 'r', 'utf8') as f_in:
+        with codecs.open(file_out, 'w', 'utf-8') as f_out:
+            for line in f_in:
+                if not len(line.strip())==0:
+#                    try:
+                        target = line.strip().lower() if lowercase else line.strip()
+                        if over_segs:
+                            # Segments
+                            mapped_items = [str(vocab.w2i.get(w, vocab.w2i[UNK_CHAR])) for w in target.split(BOUNDARY_CHAR)]
+                            f_out.write(u'{}\n'.format(BOUNDARY_CHAR.join(mapped_items)))
+                        else:
+                            # Chars
+                            mapped_items = [str(vocab.w2i.get(c, vocab.w2i[UNK_CHAR])) for c in target]
+                            f_out.write(u'{}\n'.format(' '.join(mapped_items)))
+#                    except:
+#                        print u"bad line: {}".format(line)
+
+if __name__ == "__main__":
+    arguments = docopt(__doc__)
+    print arguments
+    
+    if arguments['build']:
+        assert arguments['DATA_PATH']!=None
+        assert arguments['VOCAB_PATH']!=None
+        
+        print 'Loading data...'
+        over_segs = arguments['--segments']
+        data_path = check_path(arguments['DATA_PATH'], 'DATA_PATH')
+        vocab_path = arguments['VOCAB_PATH']
+        input_format = int(arguments['--input_col'])
+        data = list(read(data_path, input_format, over_segs, arguments['--lowercase']))
+        print 'Data has {} examples'.format(len(data))
+
+        build_vocabulary(data,vocab_path, float(arguments['--vocab_trunk']))
+    elif arguments['apply']:
+        assert arguments['DATA_PATH_IN']!=None
+        assert arguments['DATA_PATH_OUT']!=None
+        assert arguments['VOCAB_PATH']!=None
+
+        apply(arguments['DATA_PATH_IN'],arguments['DATA_PATH_OUT'],arguments['VOCAB_PATH'],arguments['--segments'],arguments['--lowercase'])
+
+

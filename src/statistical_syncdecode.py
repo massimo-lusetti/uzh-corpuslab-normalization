@@ -4,9 +4,9 @@
 
 Usage:
   statistical_syncdecode.py [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE]
-  ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--segformat]
-  [--lm_predictors=LM_TYPES] [--lm_path=LM_PATHS] [--lm_order=LM_ORDERS]
-  [--predictor_weights=WEIGHTS] [--format=FORMAT]
+  ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--input_format=INPUT_FORMAT]
+  [--lm_predictors=LM_TYPES] [--lm_paths=LM_PATHS] [--lm_orders=LM_ORDERS]
+  [--predictor_weights=WEIGHTS] [--output_format=FORMAT] [--lowercase=LOW] [--morph_vocab=MORPH_VOCAB] [--nmt_type=NMT_TYPE]
   
 Arguments:
   ED_MODEL_FOLDER  ED model(s) folder, possibly relative to RESULTS_FOLDER, comma-separated
@@ -19,12 +19,15 @@ Options:
   --beam=BEAM                   beam width [default: 1]
   --test_path=TEST_FILE         test set path, possibly relative to DATA_FOLDER, only for evaluation
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
-  --segformat                   format of the segmentation input file (3 cols)
+  --input_format=INPUT_FORMAT   coma-separated list of input, output columns [default: 0,1]
+  --lowercase=LOW               use lowercased data [default: True]
   --lm_predictors=LM_TYPES      comma-separated type of the provided language models. E.g.: srilm_char, srilm_morph for SRILM character language model or SRILM morpheme language model
-  --lm_path=LM_PATHS            comma-separated paths of the language models in the same order as described in lm_predictors
-  --lm_order=LM_ORDERS          comma-separated orders of each of the language models in the same order as described in lm_predictors
+  --lm_paths=LM_PATHS           comma-separated paths of the language models in the same order as described in lm_predictors
+  --lm_orders=LM_ORDERS         comma-separated orders of each of the language models in the same order as described in lm_predictors
   --predictor_weights=WEIGHTS   comma-separated weights of the nmt and language models (in the same order as described in lm_predictors)
-  --format=FORMAT               format of the output: 0 - only predictions, 1 - n-best form with scores [default: 0]
+  --output_format=FORMAT        format of the output: 0 - only predictions, 1 - n-best form with scores [default: 0]
+  --morph_vocab=MORPH_VOCAB     mapping from morphs to int, needed for LM over morphs
+  --nmt_type=NMT_TYPE           nmt model type: norm_soft, norm_soft_pos [default: 'norm_soft']
 """
 
 from __future__ import division
@@ -48,12 +51,14 @@ import copy
 
 from common import BEGIN_CHAR,STOP_CHAR,UNK_CHAR, BOUNDARY_CHAR, SRC_FOLDER,RESULTS_FOLDER,DATA_FOLDER,check_path, write_pred_file, write_param_file, write_eval_file
 from vocab_builder import build_vocabulary, Vocab
-from norm_soft import log_to_file, SoftDataSet, SoftAttention
+from norm_soft import SoftDataSet, SoftAttention
+from norm_soft_pos import SoftDataSetFeat
+from norm_soft_pos import SoftAttention as SoftAttentionFeat
 from statistical_lm import SRILM_char_lm_loader, SRILM_morpheme_lm_loader
 MAX_PRED_SEQ_LEN = 50 # option
 
 def _compute_scores(lm_models, lm_states, weights, segment, nmt_vocab, STOP, BOUNDARY, UNK, eow=False, verbose=False):
-    """compute scores of model ensemble """
+    """compute scores of language model """
     
     lm_scores = []
     for i,(m,s) in enumerate(zip(lm_models,lm_states)):
@@ -61,11 +66,24 @@ def _compute_scores(lm_models, lm_states, weights, segment, nmt_vocab, STOP, BOU
         if m.__class__.__name__ == 'SRILM_morpheme_lm_loader':
             #segment=" ".join([str(s) for s in segment])
 #            print "morpheme:", segment
+            # mapping of artifacts to unk
+            if segment=='':
+                segment = '<unk>'
+            if verbose:
+                print u'segment, state,eow: {},{},{}'.format(segment, s, eow)
+            segment_enc = m.vocab.w2i.get(segment, UNK)
             m.set_state(s)
-            lm_score = m.score(segment)
-            m.consume(segment)
+            if eow:
+                lm_score = m.score(segment_enc, eow=1)
+                if verbose:
+                    print 'eow score: {}'.format(lm_score)
+            else:
+                lm_score = m.score(segment_enc)
+                if verbose:
+                    print 'score: {}'.format(lm_score)
+            m.consume(segment_enc)
 #            print "morpheme score:", lm_score
-            lm_scores.append(temp_lm_score)
+            lm_scores.append(-lm_score) #lm_scores.append(temp_lm_score)
             lm_states[i] = m.get_state()
 
 	# the segment is a character
@@ -74,11 +92,11 @@ def _compute_scores(lm_models, lm_states, weights, segment, nmt_vocab, STOP, BOU
             new_state=s
             if verbose:
                 print u'segment, state,eow: {},{},{}'.format(segment, s, eow)
-            segment = [nmt_vocab.w2i.get(c, UNK) for c in segment]
+            segment_enc = [nmt_vocab.w2i.get(c, UNK) for c in segment]
             if verbose:
-                print u'segment encoded: {}'.format(segment)
+                print u'segment encoded: {}'.format(segment_enc)
 
-            for c in segment:
+            for c in segment_enc:
                 m.set_state(new_state)
                 char_score = m.score(c)
                 m.consume(c)
@@ -106,11 +124,14 @@ def _compute_scores(lm_models, lm_states, weights, segment, nmt_vocab, STOP, BOU
     return np.array(lm_scores), lm_states
             
     
-def predict_syncbeam(input, nmt_models, lm_models, weights, beam = 1, verbose = False):
+def predict_syncbeam(input, nmt_models, lm_models, weights, beam = 1, verbose = False, features=None):
     """predicts a string of characters performing synchronous beam-search."""
     dy.renew_cg()
     for nmt_model in nmt_models:
-        nmt_model.param_init(input)
+        if features:
+            nmt_model.param_init(input,features)
+        else:
+            nmt_model.param_init(input)
     for lm_model in lm_models:
         lm_model.param_init()
     nmt_vocab = nmt_models[0].vocab # same vocab file for all nmt_models
@@ -145,7 +166,7 @@ def predict_syncbeam(input, nmt_models, lm_models, weights, beam = 1, verbose = 
                 complete_hypos = []
                 expansion.sort(key=lambda e: e[2])
                 if verbose:
-                    print u'expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),nmt_log_p,lm_log_p) for _,_,nmt_log_p,lm_log_p,w,_,pred_id in expansion[:beam]])
+                    print u'expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),nmt_log_p,lm_log_p,pred_id) for _,_,nmt_log_p,lm_log_p,w,_,pred_id in expansion[:beam]])
                 for e in expansion[:beam]:
                     s_nmt, s_lm, nmt_log_p, lm_log_p, word, segment, pred_id = e
                     if pred_id == STOP or pred_id == BOUNDARY:
@@ -170,6 +191,8 @@ def predict_syncbeam(input, nmt_models, lm_models, weights, beam = 1, verbose = 
         m_hypos = []
         m_expansion.extend(m_complete_hypos)
         m_complete_hypos = []
+#        print m_expansion
+#        print np.array(weights)
         m_expansion.sort(key=lambda e: e[2]*weights[0]+np.dot(e[3],np.array(weights[1:])))
         if verbose:
             print u'm_expansion: {}'.format([(w+nmt_vocab.i2w.get(pred_id,UNK_CHAR),nmt_log_p,lm_log_p) for _,_,nmt_log_p,lm_log_p,w,_,pred_id in m_expansion[:beam]])
@@ -195,19 +218,48 @@ def predict_syncbeam(input, nmt_models, lm_models, weights, beam = 1, verbose = 
         final_hypos.append((nmt_log_p,lm_log_p, word, nmt_log_p*weights[0] + np.dot(lm_log_p,np.array(weights[1:]))))
     return final_hypos
 
-def evaluate_syncbeam(data, ed_models, lm_models, weights, beam, format, verbose =False):
+def evaluate_syncbeam_nofeat(data, ed_models, lm_models, weights, beam, format, verbose =False):
         # data is a list of tuples (an instance of SoftDataSet with iter method applied)
     correct = 0.
     final_results = []
     for i,(input,output) in enumerate(data):
         predictions = predict_syncbeam(input, ed_models, lm_models, weights, beam, verbose)
-        prediction = predictions[0][2]
-#        print predictions
-        if prediction == output.lower():
+        try:
+            prediction = predictions[0][2]
+        except:
+            print i, input, output, predictions
+#        print i,predictions
+        if prediction == output:
             correct += 1
 #        else:
-#            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+        if i < 5:
+            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
 #            print predictions
+        if format == 0:
+            final_results.append((input,prediction))
+        else:
+            final_results.append((input,predictions )) # input, (nmt_score, lm_score, pred, weighted_score)
+    accuracy = correct / len(data)
+    return accuracy, final_results
+
+def evaluate_syncbeam_feat(data, ed_models, lm_models, weights, beam, format, verbose =False):
+    # data is a list of tuples (an instance of SoftDataSet with iter method applied)
+    correct = 0.
+    final_results = []
+    for i,(input,output,feat) in enumerate(data):
+        predictions = predict_syncbeam(input, ed_models, lm_models, weights, beam, verbose, feat)
+        try:
+            prediction = predictions[0][2]
+        except:
+            print i, input, output, predictions
+        #        print i,predictions
+        if prediction == output.lower():
+            correct += 1
+        if i < 5:
+            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+        #        else:
+        #            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+        #            print predictions
         if format == 0:
             final_results.append((input,prediction))
         else:
@@ -230,9 +282,14 @@ if __name__ == "__main__":
     
     print 'Loading data...'
     test_path = check_path(arguments['--test_path'], '--test_path')
-    data_set = SoftDataSet
-    three_col_format = (0,2) if arguments['--segformat'] else False
-    test_data = data_set.from_file(test_path,three_col_format)
+    if arguments['--nmt_type']=='norm_soft_pos':
+        data_set = SoftDataSetFeat
+        evaluate_syncbeam = evaluate_syncbeam_feat
+    else:
+        data_set = SoftDataSet
+        evaluate_syncbeam = evaluate_syncbeam_nofeat
+    input_format = [int(col) for col in arguments['--input_format'].split(',')]
+    test_data = data_set.from_file(test_path,input_format, arguments['--lowercase'])
     print 'Test data has {} examples'.format(test_data.length)
     
     print 'Checking if any special symbols in data...'
@@ -256,14 +313,18 @@ if __name__ == "__main__":
         hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
         model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
             'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
-                #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
-                'LAYERS': int(hyperparams_dict['LAYERS']),
-                    'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
+                'LAYERS': int(hyperparams_dict['LAYERS'])}
         # vocab folder is taken from the first nmt folder
-        vocab_path = check_path(path, 'ED_MODEL_FOLDER_{}'.format(0), is_data_path=False) + '/vocab.txt'
+        vocab_path = check_path(arguments['ED_MODEL_FOLDER'].split(',')[0], 'ED_MODEL_FOLDER_0', is_data_path=False) + '/vocab.txt'
         model_hyperparams['VOCAB_PATH'] = vocab_path
         ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
-        ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
+        if arguments['--nmt_type']=='norm_soft_pos':
+            feat_vocab_path = check_path(arguments['ED_MODEL_FOLDER'].split(',')[0], 'ED_MODEL_FOLDER_0', is_data_path=False) + '/feat_vocab.txt'
+            model_hyperparams['FEAT_VOCAB_PATH'] = feat_vocab_path
+            model_hyperparams['FEAT_INPUT_DIM'] = int(hyperparams_dict['FEAT_INPUT_DIM'])
+            ed_model =  SoftAttentionFeat(ed_model_params[i], model_hyperparams,best_model_path)
+        else:
+            ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
         
         ed_models.append(ed_model)
     ensemble_number = len(ed_models)
@@ -274,17 +335,19 @@ if __name__ == "__main__":
     for i,(lm_type,path,order) in enumerate(\
 		zip(\
 		    arguments['--lm_predictors'].split(','),\
-		    arguments["--lm_path"].split(','),\
-		    [int(o) for o in arguments["--lm_order"].split(',')]\
+		    arguments["--lm_paths"].split(','),\
+		    [int(o) for o in arguments["--lm_orders"].split(',')]\
 		)):
-        print '...Loading lm model {}'.format(i)
         lm_model_folder =  check_path(path, 'LM_MODEL_FOLDER_{}'.format(i), is_data_path=False)
-	if lm_type=="srilm_char":
-        	lm_model =  SRILM_char_lm_loader(path, order)
-	elif lm_type=="srilm_morph":
-		lm_model = SRILM_morpheme_lm_loader(path,order)
-	else:
-		print "WARNING -- Could not load language model. Unknown type",lm_type,". Use 'srilm_char' or 'srilm_morph'"
+        if lm_type=="srilm_char":
+            print '...Loading lm model {} from path {}'.format(i,lm_model_folder)
+            lm_model =  SRILM_char_lm_loader(lm_model_folder, order)
+        elif lm_type=="srilm_morph":
+            lm_model = SRILM_morpheme_lm_loader(lm_model_folder,order)
+            assert arguments['--morph_vocab'] != None
+            lm_model.vocab = Vocab.from_file(check_path(arguments['--morph_vocab'], 'morph_vocab', is_data_path=False))
+        else:
+            print "WARNING -- Could not load language model. Unknown type",lm_type,". Use 'srilm_char' or 'srilm_morph'"
         lm_models.append(lm_model)
     lm_number  = len(lm_models)
 
@@ -293,9 +356,9 @@ if __name__ == "__main__":
     # save best dev model parameters and predictions
     print 'Evaluating on test..'
     t = time.clock()
-#    accuracy, test_results = evaluate_syncbeam(test_data.iter(indices=[3]), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--format']), verbose =True)
-    accuracy, test_results = evaluate_syncbeam(test_data.iter(), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--format']))
+#    accuracy, test_results = evaluate_syncbeam(test_data.iter(indices=[0]), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']), verbose =True)
+    accuracy, test_results = evaluate_syncbeam(test_data.iter(), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']))
     print 'Time: {}'.format(time.clock()-t)
     print 'accuracy: {}'.format(accuracy)
-    write_pred_file(output_file_path, test_results, int(arguments['--format']))
+    write_pred_file(output_file_path, test_results, int(arguments['--output_format']))
     write_eval_file(output_file_path, accuracy, test_path)

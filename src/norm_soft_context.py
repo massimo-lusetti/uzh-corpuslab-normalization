@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft_context.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
+  norm_soft_context.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase=LOW] [--pos_split_space]
     [--char_input=CHAR_INPUT] [--word_input=WORD_INPUT] [--feat_input=FEAT_INPUT] [--hidden=HIDDEN] [--hidden_context=HIDDEN_CONTEXT] [--layers=LAYERS] [--char_vocab_path=VOCAB_PATH_CHAR] [--feat_vocab_path=VOCAB_PATH_FEAT] [--word_vocab_path=VOCAB_PATH_WORD] [--feat_vocab_path_in=VOCAB_PATH_FEAT_IN]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION] [--aux_pos_task] [--aux_weight=AUX_WEIGHT] [--pos_feature]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft_context.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW]
   norm_soft_context.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW]
     
 
 Arguments:
@@ -41,7 +41,7 @@ Options:
   --beam=BEAM                   beam width [default: 1]
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
-  --lowercase                   use lowercased data [default: False]
+  --lowercase=LOW               use lowercased data [default: True]
   --pos_split_space             use space to split POS tag features, the default is '+'
   --aux_pos_task                use auxilary task to predict POS tag
   --aux_weight=AUX_WEIGH        weight of auxilary loss [default: 0.2]
@@ -1129,7 +1129,11 @@ if __name__ == "__main__":
                             'AUX_POS_TASK': True if hyperparams_dict['AUX_POS_TASK']=="True" else False,
                             'POS_FEATURE': True if hyperparams_dict['POS_FEATURE']=="True" else False,
                             'POS_SPLIT_SPACE': True if hyperparams_dict['POS_SPLIT_SPACE']=="True" else False}
-
+        # a fix for vocab path when transferring files b/n vm
+        model_hyperparams['CHAR_VOCAB_PATH'] = check_path(model_folder + '/char_vocab.txt', 'vocab_path', is_data_path=False)
+        model_hyperparams['WORD_VOCAB_PATH'] = check_path(model_folder + '/word_vocab.txt', 'vocab_path', is_data_path=False)
+        model_hyperparams['FEAT_VOCAB_PATH'] = check_path(model_folder + '/feat_vocab.txt', 'vocab_path', is_data_path=False)
+        model_hyperparams['FEAT_VOCAB_PATH_IN'] = check_path(model_folder + '/feat_vocab_in.txt', 'vocab_path', is_data_path=False)
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
@@ -1181,6 +1185,11 @@ if __name__ == "__main__":
                             'AUX_POS_TASK': True if hyperparams_dict['AUX_POS_TASK']=="True" else False,
                             'POS_FEATURE': True if hyperparams_dict['POS_FEATURE']=="True" else False,
                             'POS_SPLIT_SPACE': True if hyperparams_dict['POS_SPLIT_SPACE']=="True" else False}
+            # a fix for vocab path when transferring files b/n vm
+            model_hyperparams['CHAR_VOCAB_PATH'] = check_path(path + '/char_vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['WORD_VOCAB_PATH'] = check_path(path + '/word_vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['FEAT_VOCAB_PATH'] = check_path(path + '/feat_vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['FEAT_VOCAB_PATH_IN'] = check_path(path + '/feat_vocab_in.txt', 'vocab_path', is_data_path=False)
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             

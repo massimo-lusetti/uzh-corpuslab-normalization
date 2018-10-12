@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase]
-    [--input=INPUT] [--hidden=HIDDEN] [--feat-input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
+  norm_soft.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase=LOW]
+    [--input=INPUT] [--hidden=HIDDEN] [--layers=LAYERS] [--vocab_path=VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW]
   norm_soft.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW]
     
 
 Arguments:
@@ -23,7 +23,6 @@ Options:
   --dynet-mem MEM               allocates MEM bytes for DyNET [default: 500]
   --input=INPUT                 input vector dimensions [default: 100]
   --hidden=HIDDEN               hidden layer dimensions [default: 200]
-  --feat-input=FEAT             feature input vector dimension [default: 20]
   --layers=LAYERS               amount of layers in LSTMs  [default: 1]
   --dropout=DROPOUT             amount of dropout in LSTMs [default: 0]
   --epochs=EPOCHS               number of training epochs   [default: 30]
@@ -36,7 +35,7 @@ Options:
   --beam=BEAM                   beam width [default: 1]
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output columns [default: 0,1]
-  --lowercase                   use lowercased data [default: False]
+  --lowercase=LOW               use lowercased data [default: True]
 """
 
 from __future__ import division
@@ -900,10 +899,10 @@ if __name__ == "__main__":
         hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
         model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
                             'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
-                            #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                             'LAYERS': int(hyperparams_dict['LAYERS']),
                             'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
-
+        # a fix for vocab path when transferring files b/n vm
+        model_hyperparams['VOCAB_PATH'] = check_path(model_folder + '/vocab.txt', 'vocab_path', is_data_path=False)
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
@@ -944,9 +943,10 @@ if __name__ == "__main__":
             hyperparams_dict = dict([line.strip().split(' = ') for line in hypoparams_file_reader.readlines()])
             model_hyperparams = {'INPUT_DIM': int(hyperparams_dict['INPUT_DIM']),
                 'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
-                    #'FEAT_INPUT_DIM': int(hyperparams_dict['FEAT_INPUT_DIM']),
                     'LAYERS': int(hyperparams_dict['LAYERS']),
                         'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
+            # a fix for vocab path when transferring files b/n vm
+            model_hyperparams['VOCAB_PATH'] = vocab_path = check_path(path + '/vocab.txt', 'vocab_path', is_data_path=False)
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             

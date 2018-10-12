@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft_pos.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
+  norm_soft_pos.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase=LOW] [--pos_split_space]
     [--input=INPUT] [--hidden=HIDDEN] [--feat_input=FEAT] [--layers=LAYERS] [--vocab_path=VOCAB_PATH] [--feat_vocab_path=FEAT_VOCAB_PATH]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft_pos.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW] [--pos_split_space]
   norm_soft_pos.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase] [--pos_split_space]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW] [--pos_split_space]
     
 
 Arguments:
@@ -23,7 +23,7 @@ Options:
   --dynet-mem MEM               allocates MEM bytes for DyNET [default: 500]
   --input=INPUT                 input vector dimensions [default: 100]
   --hidden=HIDDEN               hidden layer dimensions [default: 200]
-  --feat_input=FEAT             feature input vector dimension [default: 20]
+  --feat_input=FEAT             feature input vector dimension [default: 50]
   --layers=LAYERS               amount of layers in LSTMs  [default: 1]
   --dropout=DROPOUT             amount of dropout in LSTMs [default: 0]
   --epochs=EPOCHS               number of training epochs   [default: 30]
@@ -37,7 +37,7 @@ Options:
   --beam=BEAM                   beam width [default: 1]
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
-  --lowercase                   use lowercased data [default: False]
+  --lowercase=LOW               use lowercased data [default: True]
   --pos_split_space             use space to split POS tag features, the default is '+'
 """
 
@@ -70,34 +70,6 @@ OPTIMIZERS = {'ADAM'    : lambda m: dy.AdamTrainer(m, lam=0.0, alpha=0.0001, #co
 
 ### IO handling and evaluation
 
-def load_data(filename, input_format, lowercase=False):
-    """ Load data from file
-        
-        filename (str):   file containing input/output data, structure (tab-separated):
-        input    output
-        return tuple (output, input) where each element is a list
-        where each element in the list is one example
-        """
-    
-    print 'loading data from file:', filename
-    
-    input_col, output_col = input_format
-    inputs, outputs = [], []
-    
-    with codecs.open(filename, encoding='utf8') as f:
-        for i,line in enumerate(f):
-            if not len(line.strip())==0:
-                try:
-                    splt = line.strip().split('\t')
-                    inputs.append(splt[input_col].lower() if lowercase else splt[input_col])
-                    outputs.append(splt[output_col].lower() if lowercase else splt[output_col])
-                except:
-                    print "bad line: {}, {}".format(i,line)
-
-    tup = (inputs, outputs)
-    print 'found', len(outputs), 'examples'
-    return tup
-
 def load_data_pos(filename, input_format, lowercase=False, split_by_space=False):
     """ Load data from file
         
@@ -108,6 +80,8 @@ def load_data_pos(filename, input_format, lowercase=False, split_by_space=False)
         """
     
     print 'loading data from file:', filename
+    print 'input_format:', input_format
+    print 'lowercasing:', lowercase
     
     input_col, output_col, feat_col = input_format
     inputs, outputs, features = [], [], []
@@ -539,7 +513,7 @@ class SoftAttention(object):
         results.sort(key=lambda h: h[0])
         return results
 
-def evaluate_ensemble(nmt_models, data, beam):
+def evaluate_ensemble(nmt_models, data, beam, verbose=False):
     # data is a list of tuples (an instance of SoftDataSet with iter method applied)
     correct = 0.
     final_results = []
@@ -547,10 +521,13 @@ def evaluate_ensemble(nmt_models, data, beam):
         dy.renew_cg()
         predictions = predict_ensemble(nmt_models, input, features, beam)
         prediction = predictions[0][1]
-        #            print i, input, predictions
+        if verbose:
+            print i, input, predictions
         if prediction == output:
             correct += 1
-#        else:
+        else:
+            if verbose:
+                print u'{}, input: {}, true: {}, pred: {}'.format(i, input,output ,  prediction)
 #            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
 #            print predictions
         final_results.append((input,prediction))  # pred expected as list
@@ -878,6 +855,9 @@ if __name__ == "__main__":
                             'LAYERS': int(hyperparams_dict['LAYERS']),
             'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
                     'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
+        # a fix for vocab path when transferring files b/n vm
+        model_hyperparams['VOCAB_PATH'] = check_path(model_folder + '/vocab.txt', 'vocab_path', is_data_path=False)
+        model_hyperparams['FEAT_VOCAB_PATH'] = check_path(model_folder + '/feat_vocab.txt', 'vocab_path', is_data_path=False)
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
@@ -922,6 +902,9 @@ if __name__ == "__main__":
                     'LAYERS': int(hyperparams_dict['LAYERS']),
                         'VOCAB_PATH': hyperparams_dict['VOCAB_PATH'],
                         'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH']}
+            # a fix for vocab path when transferring files b/n vm
+            model_hyperparams['VOCAB_PATH'] = check_path(path + '/vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['FEAT_VOCAB_PATH'] = check_path(path + '/feat_vocab.txt', 'vocab_path', is_data_path=False)
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             
@@ -933,6 +916,7 @@ if __name__ == "__main__":
 
         print 'Evaluating on test..'
         t = time.clock()
+#        accuracy, test_results = evaluate_ensemble(ed_models, test_data.iter(indices=[183,184,185]), int(arguments['--beam']), verbose=True)
         accuracy, test_results = evaluate_ensemble(ed_models, test_data.iter(), int(arguments['--beam']))
         print 'Time: {}'.format(time.clock()-t)
         print 'accuracy: {}'.format(accuracy)

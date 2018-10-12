@@ -3,14 +3,14 @@
 """Trains encoder-decoder model with soft attention.
 
 Usage:
-  norm_soft_char_context.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase] [--pos_split_space]
+  norm_soft_char_context.py train [--dynet-seed SEED] [--dynet-mem MEM] [--input_format=INPUT_FORMAT]  [--lowercase=LOW] [--pos_split_space]
     [--char_input=CHAR_INPUT] [--word_input=WORD_INPUT] [--feat_input=FEAT_INPUT] [--hidden=HIDDEN] [--hidden_context=HIDDEN_CONTEXT] [--layers=LAYERS] [--char_vocab_path=VOCAB_PATH_CHAR] [--feat_vocab_path=VOCAB_PATH_FEAT] [--word_vocab_path=VOCAB_PATH_WORD] [--feat_vocab_path_in=VOCAB_PATH_FEAT_IN]
     [--dropout=DROPOUT] [--epochs=EPOCHS] [--patience=PATIENCE] [--optimization=OPTIMIZATION] [--aux_pos_task] [--aux_weight=AUX_WEIGHT] [--pos_feature]
     MODEL_FOLDER --train_path=TRAIN_FILE --dev_path=DEV_FILE
   norm_soft_char_context.py test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW]
   norm_soft_char_context.py ensemble_test [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE] [--input_format=INPUT_FORMAT]
-    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase]
+    ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--lowercase=LOW]
     
 
 Arguments:
@@ -23,7 +23,7 @@ Options:
   --dynet-mem MEM               allocates MEM bytes for DyNET [default: 500]
   --char_input=CHAR_INPUT       charachters input vector dimensions [default: 100]
   --word_input=WORD_INPUT        word feature input vector dimension [default: 128]
-  --feat_input=FEAT_INPUT       feature input vector dimension [default: 20]
+  --feat_input=FEAT_INPUT       feature input vector dimension [default: 50]
   --hidden=HIDDEN               hidden layer dimensions for encoder/decoder LSTM [default: 200]
   --hidden_context=HIDDEN_CONTEXT  hidden layer dimensions for context LSTM [default: 100]
   --layers=LAYERS               amount of layers in LSTMs  [default: 1]
@@ -41,7 +41,7 @@ Options:
   --beam=BEAM                   beam width [default: 1]
   --pred_path=PRED_FILE         name for predictions file in the test mode [default: 'best.test']
   --input_format=INPUT_FORMAT   coma-separated list of input, output, features columns [default: 0,1,2]
-  --lowercase                   use lowercased data [default: False]
+  --lowercase=LOW               use lowercased data [default: True]
   --pos_split_space             use space to split POS tag features, the default is '+'
   --aux_pos_task                use auxilary task to predict POS tag
   --aux_weight=AUX_WEIGH        weight of auxilary loss [default: 0.2]
@@ -976,17 +976,17 @@ if __name__ == "__main__":
                 data = train_data.features_in
                 build_vocabulary(data, feat_vocab_path_in)
 
-        if os.path.exists(arguments['--word_vocab_path']):
-                word_vocab_path = arguments['--word_vocab_path'] # absolute path  to existing vocab file
-        else:
-            tmp = os.path.join(RESULTS_FOLDER, arguments['--word_vocab_path'])
-            if os.path.exists(tmp): # relative path to existing vocab file
-                word_vocab_path = tmp
-            else:
-                word_vocab_path = os.path.join(model_folder,arguments['--word_vocab_path']) # no vocab - use default name
-                print 'Building word vocabulary..'
-                data = set(train_data.inputs)
-                build_vocabulary(data, word_vocab_path, vocab_trunk=0.01, over_words=True)
+#        if os.path.exists(arguments['--word_vocab_path']):
+#                word_vocab_path = arguments['--word_vocab_path'] # absolute path  to existing vocab file
+#        else:
+#            tmp = os.path.join(RESULTS_FOLDER, arguments['--word_vocab_path'])
+#            if os.path.exists(tmp): # relative path to existing vocab file
+#                word_vocab_path = tmp
+#            else:
+#                word_vocab_path = os.path.join(model_folder,arguments['--word_vocab_path']) # no vocab - use default name
+#                print 'Building word vocabulary..'
+#                data = set(train_data.inputs)
+#                build_vocabulary(data, word_vocab_path, vocab_trunk=0.01, over_words=True)
 
 
         # Paths for checks and results
@@ -1001,7 +1001,7 @@ if __name__ == "__main__":
                             'HIDDEN_DIM': int(arguments['--hidden']),
                             'HIDDEN_DIM_CONTEXT': int(arguments['--hidden_context']),
                             'LAYERS': int(arguments['--layers']),
-                            'WORD_VOCAB_PATH': word_vocab_path,
+                            #'WORD_VOCAB_PATH': word_vocab_path,
                             'CHAR_VOCAB_PATH': char_vocab_path,
                             'FEAT_VOCAB_PATH': feat_vocab_path,
                             'FEAT_VOCAB_PATH_IN' : feat_vocab_path_in,
@@ -1147,14 +1147,19 @@ if __name__ == "__main__":
                             'HIDDEN_DIM': int(hyperparams_dict['HIDDEN_DIM']),
                             'HIDDEN_DIM_CONTEXT': int(hyperparams_dict['HIDDEN_DIM_CONTEXT']),
                             'LAYERS': int(hyperparams_dict['LAYERS']),
-                            'WORD_VOCAB_PATH': hyperparams_dict['WORD_VOCAB_PATH'],
+                            #'WORD_VOCAB_PATH': hyperparams_dict['WORD_VOCAB_PATH'],
                             'CHAR_VOCAB_PATH': hyperparams_dict['CHAR_VOCAB_PATH'],
                             'FEAT_VOCAB_PATH': hyperparams_dict['FEAT_VOCAB_PATH'],
                             'FEAT_VOCAB_PATH_IN' : hyperparams_dict['FEAT_VOCAB_PATH_IN'],
                             'AUX_POS_TASK': True if hyperparams_dict['AUX_POS_TASK']=="True" else False,
                             'POS_FEATURE': True if hyperparams_dict['POS_FEATURE']=="True" else False,
                             'POS_SPLIT_SPACE': True if hyperparams_dict['POS_SPLIT_SPACE']=="True" else False}
-
+        # a fix for vocab path when transferring files b/n vm
+        model_hyperparams['CHAR_VOCAB_PATH'] = check_path(model_folder + '/char_vocab.txt', 'vocab_path', is_data_path=False)
+#        model_hyperparams['WORD_VOCAB_PATH'] = check_path(model_folder + '/word_vocab.txt', 'vocab_path', is_data_path=False)
+        model_hyperparams['FEAT_VOCAB_PATH'] = check_path(model_folder + '/feat_vocab.txt', 'vocab_path', is_data_path=False)
+        model_hyperparams['FEAT_VOCAB_PATH_IN'] = check_path(model_folder + '/feat_vocab_in.txt', 'vocab_path', is_data_path=False)
+        
         pc = dy.ParameterCollection()
         ti = SoftAttention(pc, model_hyperparams, best_model_path)
 
@@ -1207,6 +1212,12 @@ if __name__ == "__main__":
                             'AUX_POS_TASK': True if hyperparams_dict['AUX_POS_TASK']=="True" else False,
                             'POS_FEATURE': True if hyperparams_dict['POS_FEATURE']=="True" else False,
                             'POS_SPLIT_SPACE': True if hyperparams_dict['POS_SPLIT_SPACE']=="True" else False}
+            # a fix for vocab path when transferring files b/n vm
+            model_hyperparams['CHAR_VOCAB_PATH'] = check_path(path + '/char_vocab.txt', 'vocab_path', is_data_path=False)
+#            model_hyperparams['WORD_VOCAB_PATH'] = check_path(path + '/word_vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['FEAT_VOCAB_PATH'] = check_path(path + '/feat_vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['FEAT_VOCAB_PATH_IN'] = check_path(path + '/feat_vocab_in.txt', 'vocab_path', is_data_path=False)
+
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             
