@@ -111,6 +111,7 @@ cut -f2 $DEVDATA | grep . | tr '[:upper:]' '[:lower:]' > $RESULTS/dev.trg
 cut -f2 $EXTRADATA | tr '[:upper:]' '[:lower:]'> $RESULTS/extra.train.trg
 # Extend training set
 cat $RESULTS/train.trg $RESULTS/extra.train.trg > $RESULTS/train_ext.trg
+export EXTENDEDTRAIN=$RESULTS/train_ext.trg
 
 ##########################################
 # TRAINING NMT
@@ -126,10 +127,10 @@ if [[ $CONFIG == "train" ]]; then # Train nmt models
 
 elif [[ $CONFIG == "nmt" ]]; then # Only evaluate ensembles of nmt models
 
-    PYTHONIOENCODING=utf8 python $DIR/src/${NMT_TYPE}.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS --input_format=${INPUT_FORMAT}
+#    PYTHONIOENCODING=utf8 python $DIR/src/${NMT_TYPE}.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS --input_format=${INPUT_FORMAT}
 
     # evaluate on tokens - detailed output
-    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=${INPUT_FORMAT}
+    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/test.eval.det $RESULTS/Errors_test.txt --input_format=${INPUT_FORMAT}
 
 else # nmt + LM
 
@@ -140,18 +141,18 @@ else # nmt + LM
 # Use target extended data for language model over words
 if [[ $CONFIG == *"e"* ]]; then
     # Build vocab over morphemes
-    PYTHONIOENCODING=utf8  python vocab_builder.py build $RESULTS/train_ext.trg $RESULTS/morph_vocab.txt --segments 
+    PYTHONIOENCODING=utf8  python vocab_builder.py build $EXTENDEDTRAIN $RESULTS/morph_vocab.txt --segments
     # Apply vocab mapping
-    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/train_ext.trg $RESULTS/morph_vocab.txt $RESULTS/train_ext.morph.itrg  --segments
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $EXTENDEDTRAIN $RESULTS/morph_vocab.txt $RESULTS/train_ext.morph.itrg  --segments
     # train LM
     (ngram-count -text $RESULTS/train_ext.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train_ext.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train_ext.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
 
 # Use only target train data for language model over words
 else
     # Build vocab over morphemes
-    PYTHONIOENCODING=utf8  python vocab_builder.py build $RESULTS/train.trg $RESULTS/morph_vocab.txt --segments 
+    PYTHONIOENCODING=utf8  python vocab_builder.py build $TRAINDATA $RESULTS/morph_vocab.txt --segments
     # Apply vocab mapping
-    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/train.trg $RESULTS/morph_vocab.txt $RESULTS/train.morph.itrg  --segments
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $TRAINDATA $RESULTS/morph_vocab.txt $RESULTS/train.morph.itrg  --segments
     # train LM
     (ngram-count -text $RESULTS/train.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -kndiscount -interpolate ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -ukndiscount -interpolate );} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train.morph.itrg -lm $RESULTS/morfs.lm -order 3 -write $RESULTS/morfs.lm.counts -wbdiscount -interpolate );}
 
@@ -165,16 +166,16 @@ fi
 # Use target extended data for language model over chars
 if [[ $CONFIG == *"e"* ]]; then
     # Apply vocab mapping
-    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/train_ext.trg $RESULTS/vocab.trg $RESULTS/train_ext.char.itrg 
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $EXTENDEDTRAIN $RESULTS/vocab.trg $RESULTS/train_ext.char.itrg
     # train LM
     (ngram-count -text $RESULTS/train_ext.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train_ext.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train_ext.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
 
 # Use only target train data for language model over chars
 else
     # Apply vocab mapping
-    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/extra.train.trg $RESULTS/vocab.trg $RESULTS/extra.train.char.itrg 
+    PYTHONIOENCODING=utf8  python vocab_builder.py apply $RESULTS/TRAINDATA $RESULTS/vocab.trg $RESULTS/train.char.itrg
     # train LM
-    (ngram-count -text $RESULTS/extra.train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/extra.train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/extra.train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
+    (ngram-count -text $RESULTS/train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -kndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 ) || { echo "Backup to ukn "; (ngram-count -text $RESULTS/train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -ukndiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1);} || { echo "Backup to wb "; (ngram-count -text $RESULTS/train.char.itrg -lm $RESULTS/chars.lm -order 7 -write $RESULTS/chars.lm.counts -wbdiscount -interpolate  -gt3min 1 -gt4min 1 -gt5min 1 -gt6min 1 -gt7min 1 );}
 
 fi
 
@@ -211,7 +212,8 @@ elif [[ $CONFIG == "w" ]] || [[ $CONFIG == "we" ]]; then
 
     echo -e "cands_file=nbest.txt\ncands_per_sen=12\ntop_n=12\n\nnmt 1\nlm 0.1" > SDecoder_cfg.txt
 
-    echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
+#    echo -e "nmt\t|||\t1\tFix\t0\t+1\t0\t+1\nlm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = none" > params.txt
+    echo -e "nmt\t|||\t1\tOpt\t0\t+Inf\t0\t+1\nlm\t|||\t0.1\tOpt\t0\t+Inf\t0\t+1\nnormalization = absval 1 nmt" > params.txt
 
 
 # NMT + Language Model over chars + Language Model over words
@@ -237,7 +239,7 @@ cp $RESULTS/test.src $MERTEXPER
 
 wait
 
-java -cp $MERT/lib/zmert.jar ZMERT -maxMem 500 ZMERT_cfg.txt
+#java -cp $MERT/lib/zmert.jar ZMERT -maxMem 500 ZMERT_cfg.txt
 
 ## copy test out file - for analysis
 cp test.out.predictions $RESULTS/test_out_mert.txt
@@ -251,8 +253,11 @@ cp SDecoder_cfg.txt.ZMERT.final $RESULTS/params-mert-ens.txt
 #
 #
 ##evaluate on tokens - detailed output for the test set
-PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt 
-
+if [[ $CONFIG == *"e"* ]]; then
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/test.eval.det $RESULTS/Errors_test.txt --extended_train_data=$EXTENDEDTRAIN
+else
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/test.eval.det $RESULTS/Errors_test.txt
+fi
 #rm -r $MERTEXPER
 
 fi

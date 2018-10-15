@@ -119,7 +119,7 @@ elif [[ $CONFIG == "nmt" ]]; then # Only evaluate ensembles of nmt models
     PYTHONIOENCODING=utf8 python $DIR/src/norm_soft.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS 
 
     # evaluate on tokens - detailed output
-    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt 
+    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt
 
 else # nmt + LM
 
@@ -241,7 +241,7 @@ cp SDecoder_cfg.txt.ZMERT.final $RESULTS/params-mert-ens.txt
 #
 #
 ##evaluate on tokens - detailed output for the test set
-PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt 
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt 
 
 #rm -r $MERTEXPER
 
