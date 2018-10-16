@@ -41,6 +41,7 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
     train_lexicon_w = defaultdict(int)
     test_lexicon_w = defaultdict(int)
     test_dict = {} # test_word: dict(predict:freq)
+    train_dict = {} # test_word: dict(predict:freq)
     
     input = input_format[0]
     pred = input_format[1]
@@ -59,6 +60,14 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
             morfs = lineitems[pred].split(' ')
             for m in morfs:
                 train_lexicon_m[m] += 1
+            if not word in train_dict.keys():
+                train_dict[word] = {}
+                train_dict[word][segm]=1
+            else:
+                if segm not in train_dict[word].keys():
+                    train_dict[word][segm]=1
+                else:
+                    train_dict[word][segm]+=1
 
     # Read lexicon of test set
     gold_f = codecs.open(gold,'r','utf-8')
@@ -83,20 +92,26 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
                 else:
                     test_dict[word][segm]+=1
 
-    # Collect predictions
-    predict_f = codecs.open(predict,'r','utf-8')
-    pred_dict_ext = {}
-    for j, line in enumerate(predict_f):
-        line = line.strip().lower() if lowercase else line.strip()
-        w, w_segm = line.split('\t')
-        pred_dict_ext[(w,j+1)] = w_segm
-
-    amb_segm_test = {k:v for k,v in test_dict.items() if len(v)>1}
+    amb_segm_test_candidates = {k:v for k,v in test_dict.items() if k in train_dict.keys()} #the values are test frequencies - for statistics
+    amb_segm_train = {k:train_dict[k] for k,v in amb_segm_test_candidates.items() if len(train_dict[k])>1} # the values are train frequencies - for prediction
+    amb_segm_test = {k:v for k,v in amb_segm_test_candidates.items() if len(train_dict[k])>1} # the values are test frequencies - for statistics
+    print amb_segm_test.items()[:10]
     amb_segm_test_freq = {k:sum(v.values()) for k,v in amb_segm_test.items()}
     amb = sum(amb_segm_test_freq.values())
     corr_amb = 0 # number of correct ambigous
+
+    amb_segm_test_tie_candidates = {k:v.values() for k,v in amb_segm_train.items()}
+    amb_segm_test_tie_check = {k:v for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)}
+    print amb_segm_test_tie_check.items()
+    amb_segm_test_tie = {k:sum(v) for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)}
+    amb_tie = sum(amb_segm_test_tie.values())
+    corr_amb_tie = 0 # number of correct ambigous with tie
+    amb_notie = amb - amb_tie
+    corr_amb_notie = 0 # number of correct ambigous with tie
+
+
     
-    not_amb_segm_test = {k:v for k,v in test_dict.items() if len(v)==1}
+    not_amb_segm_test = {k:v for k,v in test_dict.items() if k not in amb_segm_test.keys()}
     seen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if k in train_lexicon_w.keys()}
     seen = sum(seen_freq.values())
     corr_seen = 0 # number of correct seen words
@@ -115,6 +130,7 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
 
     if pred_f:
         pred_f = codecs.open(pred_f,'w','utf-8')
+        pred_f.write(u"{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format("input","gold","baseline", "ambig?", "ambig tie?", "new?", "unique?"))
 
     # baseline statistics
     gold_f.seek(0)
@@ -133,39 +149,58 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
                 print i, line
             allc +=1
             
-            # ambigous
+            # seen and ambigous
             if w in amb_segm_test.keys():
-                w_preds = amb_segm_test[w]
+                w_preds = amb_segm_train[w]
                 w_baseline_pred = max(w_preds.keys(), key=lambda k: w_preds[k])
                 if w_baseline_pred == w_segm:
                     corr +=1
                     corr_amb +=1
+                    if w in amb_segm_test_tie.keys():
+                        corr_amb_tie +=1
+                    else:
+                        corr_amb_notie +=1
             else:
                 #new
                 if w not in train_lexicon_w.keys():
                     w_baseline_pred = w
+                    # new - old morphemes but new combination
                     if all(m in train_lexicon_m.keys() for m in w_segm_morfs):
                         if w_baseline_pred == w_segm:
                             corr +=1
                             corr_unseen_comb +=1
                     else:
+                        # new - new morphemes
                         if w_baseline_pred == w_segm:
                             corr +=1
                             corr_unseen_m +=1
-                #seen
+                #seen and unique
                 else:
                     w_baseline_pred = test_dict[w].keys()[0]
                     if w_baseline_pred == w_segm:
                         corr +=1
                         corr_seen +=1
-            if pred:
-                pred_f.write(u"{}\t{}\t{}\n".format(w,w_segm,w_baseline_pred))
+            if pred_f:
+                w_new,w_unique,w_amb_tie,w_amb = False, False, False, False
+                if w in amb_segm_test.keys():
+                    w_amb = True
+                    if w in amb_segm_test_tie.keys():
+                        w_amb_tie = True
+                else:
+                    if w not in train_lexicon_w.keys():
+                        w_new = True
+                    else:
+                        w_unique = True
+
+                pred_f.write(u"{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(w,w_segm,w_baseline_pred, w_amb,w_amb_tie, w_new, w_unique))
                         
     print "\nDATA:"
     print "\n   TRAIN  TEST:"
     print "\n# of target segment tokens %d  %d" % (sum(train_lexicon_m.values()), sum(test_lexicon_m.values()))
     print "\n# of source word tokens %d  %d" % (sum(train_lexicon_w.values()), sum(test_lexicon_w.values()))
     print "\n# of ambigous source word tokens        %d (%.2f%%)" % (amb, float(amb)/float(sum(test_lexicon_w.values()))*100)
+    print "\n# of ambigous source word tokens - ties        %d (%.2f%%)" % (amb_tie, float(amb_tie)/float(sum(test_lexicon_w.values()))*100)
+    print "\n# of ambigous source word tokens - no ties        %d (%.2f%%)" % (amb_notie, float(amb_notie)/float(sum(test_lexicon_w.values()))*100)
     print "\n# of seen source word tokens        %d (%.2f%%)" % (seen, float(seen)/float(sum(test_lexicon_w.values()))*100)
     print "\n# of unseen source word tokens      %d (%.2f%%)" % (unseen, float(unseen)/float(sum(test_lexicon_w.values()))*100)
     print "\n# of unseen source word tokens - new target segments       %d (%.2f%%)" % (unseen_m, float(unseen_m)/float(sum(test_lexicon_w.values()))*100)
@@ -175,6 +210,8 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
     print "\n        Number of predictions total: %d" % allc
     print "\nNumber of correct predictions total: %d (%.2f%%)" % (corr, float(corr)/float(allc)*100)
     print "\n                         - ambigous: %d (%.2f%%)" % (corr_amb, float(corr_amb)/float(amb)*100)
+    print "\n                   - ambigous(ties): %d (%.2f%%)" % (corr_amb_tie, float(corr_amb_tie)/float(amb_tie)*100)
+    print "\n                - ambigous(no ties): %d (%.2f%%)" % (corr_amb_notie, float(corr_amb_notie)/float(amb_notie)*100)
     if seen !=0:
         print "\n                   - seen words: %d (%.2f%%)" % (corr_seen, float(corr_seen)/float(seen)*100)
     print "\n            - unseen (new morphemes): %d (%.2f%%)" % (corr_unseen_m, float(corr_unseen_m)/float(unseen_m)*100)
