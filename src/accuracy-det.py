@@ -41,7 +41,7 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
     train_lexicon_w = defaultdict(int)
     test_lexicon_w = defaultdict(int)
     test_dict = {} # test_word: dict(predict:freq)
-    train_dict = {} # test_word: dict(predict:freq)
+    train_dict = {} # train_word: dict(predict:freq)
     
     input = input_format[0]
     pred = input_format[1]
@@ -95,15 +95,15 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
     amb_segm_test_candidates = {k:v for k,v in test_dict.items() if k in train_dict.keys()} #the values are test frequencies - for statistics
     amb_segm_train = {k:train_dict[k] for k,v in amb_segm_test_candidates.items() if len(train_dict[k])>1} # the values are train frequencies - for prediction
     amb_segm_test = {k:v for k,v in amb_segm_test_candidates.items() if len(train_dict[k])>1} # the values are test frequencies - for statistics
-    print amb_segm_test.items()[:10]
-    amb_segm_test_freq = {k:sum(v.values()) for k,v in amb_segm_test.items()}
+#    print amb_segm_train.items()[:10]
+    amb_segm_test_freq = {k:sum(v.values()) for k,v in amb_segm_test.items()}  # the values are test frequencies - for statistics
     amb = sum(amb_segm_test_freq.values())
     corr_amb = 0 # number of correct ambigous
 
-    amb_segm_test_tie_candidates = {k:v.values() for k,v in amb_segm_train.items()}
-    amb_segm_test_tie_check = {k:v for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)}
-    print amb_segm_test_tie_check.items()
-    amb_segm_test_tie = {k:sum(v) for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)}
+    amb_segm_test_tie_candidates = {k:v.values() for k,v in amb_segm_train.items()} # the values are train frequencies - for tie candidates filtering based on train set
+    amb_segm_test_tie_check = {k:v for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)} # the values are train frequencies - for printing
+#    print amb_segm_test_tie_check.items()
+    amb_segm_test_tie = {k:sum(test_dict[k].values()) for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)}   # the values are test frequencies - for statistics
     amb_tie = sum(amb_segm_test_tie.values())
     corr_amb_tie = 0 # number of correct ambigous with tie
     amb_notie = amb - amb_tie
@@ -112,14 +112,14 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
 
     
     not_amb_segm_test = {k:v for k,v in test_dict.items() if k not in amb_segm_test.keys()}
-    seen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if k in train_lexicon_w.keys()}
+    seen_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if k in train_lexicon_w.keys()}
     seen = sum(seen_freq.values())
     corr_seen = 0 # number of correct seen words
     
-    unseen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if not k in train_lexicon_w.keys()}
+    unseen_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if not k in train_lexicon_w.keys()}
     unseen = sum(unseen_freq.values())
     
-    unseen_m_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if ( not k in train_lexicon_w.keys() and not all(m in train_lexicon_m.keys() for m in v.keys()[0].split(' ')) )}
+    unseen_m_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if ( not k in train_lexicon_w.keys() and not all(m in train_lexicon_m.keys() for m in v.keys()[0].split(' ')) )}
     unseen_m = sum(unseen_m_freq.values())
     corr_unseen_m = 0 # number of correct unseen words - new morphs
     
@@ -168,11 +168,13 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
                     if all(m in train_lexicon_m.keys() for m in w_segm_morfs):
                         if w_baseline_pred == w_segm:
                             corr +=1
+                            corr_unseen +=1
                             corr_unseen_comb +=1
                     else:
                         # new - new morphemes
                         if w_baseline_pred == w_segm:
                             corr +=1
+                            corr_unseen +=1
                             corr_unseen_m +=1
                 #seen and unique
                 else:
@@ -193,35 +195,39 @@ def evaluate_baseline(trainin,gold,input_format,lowercase=False, pred_f=None):
                         w_unique = True
 
                 pred_f.write(u"{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(w,w_segm,w_baseline_pred, w_amb,w_amb_tie, w_new, w_unique))
-                        
-    print "\nDATA:"
-    print "\n   TRAIN  TEST:"
-    print "\n# of target segment tokens %d  %d" % (sum(train_lexicon_m.values()), sum(test_lexicon_m.values()))
-    print "\n# of source word tokens %d  %d" % (sum(train_lexicon_w.values()), sum(test_lexicon_w.values()))
-    print "\n# of ambigous source word tokens        %d (%.2f%%)" % (amb, float(amb)/float(sum(test_lexicon_w.values()))*100)
-    print "\n# of ambigous source word tokens - ties        %d (%.2f%%)" % (amb_tie, float(amb_tie)/float(sum(test_lexicon_w.values()))*100)
-    print "\n# of ambigous source word tokens - no ties        %d (%.2f%%)" % (amb_notie, float(amb_notie)/float(sum(test_lexicon_w.values()))*100)
-    print "\n# of seen source word tokens        %d (%.2f%%)" % (seen, float(seen)/float(sum(test_lexicon_w.values()))*100)
-    print "\n# of unseen source word tokens      %d (%.2f%%)" % (unseen, float(unseen)/float(sum(test_lexicon_w.values()))*100)
-    print "\n# of unseen source word tokens - new target segments       %d (%.2f%%)" % (unseen_m, float(unseen_m)/float(sum(test_lexicon_w.values()))*100)
-    print "\n# of unseen word tokens - new combination        %d (%.2f%%)" % (unseen_new_comb, float(unseen_new_comb)/float(sum(test_lexicon_w.values()))*100)
 
-    print "\nPERFORMANCE:"
-    print "\n        Number of predictions total: %d" % allc
-    print "\nNumber of correct predictions total: %d (%.2f%%)" % (corr, float(corr)/float(allc)*100)
-    print "\n                         - ambigous: %d (%.2f%%)" % (corr_amb, float(corr_amb)/float(amb)*100)
-    print "\n                   - ambigous(ties): %d (%.2f%%)" % (corr_amb_tie, float(corr_amb_tie)/float(amb_tie)*100)
-    print "\n                - ambigous(no ties): %d (%.2f%%)" % (corr_amb_notie, float(corr_amb_notie)/float(amb_notie)*100)
+
+    total_w_pred = sum(test_lexicon_w.values())
+    print
+    print "{:<50} {:>10} {:>10}\n".format("DATA","TRAIN", "TEST")
+    print "{:<50} {:12d} {:8d}\n".format("# of target segment tokens:", sum(train_lexicon_m.values()), sum(test_lexicon_m.values()))
+    print "{:<50} {:12d} {:8d}\n".format("# of source word tokens:", sum(train_lexicon_w.values()), total_w_pred)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens:", amb, amb/total_w_pred*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens - ties:", amb_tie, amb_tie/total_w_pred*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens - no ties:", amb_notie, amb_notie/total_w_pred*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of unique source word tokens:", seen, seen/total_w_pred*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of new source word tokens:", unseen, unseen/total_w_pred*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of new source word tokens - new target segments:", unseen_m, unseen_m/total_w_pred*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of new source word tokens - new combination:", unseen_new_comb, unseen_new_comb/total_w_pred*100)
+
+    print "\nPERFORMANCE:\n"
+    print "{:>60} {:11d}\n".format("Number of predictions total:", allc)
+    print "{:>60} {:11d} {:8.2f}%\n".format("Number of correct predictions total:", corr, corr/allc*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- ambigous:", corr_amb, corr_amb/amb*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- ambigous(ties):", corr_amb_tie, corr_amb_tie/amb_tie*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- ambigous(no ties):", corr_amb_notie, corr_amb_notie/amb_notie*100)
     if seen !=0:
-        print "\n                   - seen words: %d (%.2f%%)" % (corr_seen, float(corr_seen)/float(seen)*100)
-    print "\n            - unseen (new morphemes): %d (%.2f%%)" % (corr_unseen_m, float(corr_unseen_m)/float(unseen_m)*100)
-    print "\n            - unseen (new combination): %d (%.2f%%)" % (corr_unseen_comb, float(corr_unseen_comb)/float(unseen_new_comb)*100)
+        print "{:>60} {:11d} {:8.2f}%\n".format("- unique:", corr_seen, corr_seen/seen*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- new:", corr_unseen, corr_unseen/unseen*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- new (new morphemes):", corr_unseen_m, corr_unseen_m/unseen_m*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- new (new combination):", corr_unseen_comb, corr_unseen_comb/unseen_new_comb*100)
 
 def evaluate_ambiguity(trainin,gold,predict,file_out,file_out_errors,input_format,lowercase=False):
     train_lexicon_m = defaultdict(int)
     test_lexicon_m = defaultdict(int)
     train_lexicon_w = defaultdict(int)
     test_lexicon_w = defaultdict(int)
+    train_dict = {} # train_word: dict(predict:freq)
     test_dict = {} # test_word: dict(predict:freq)
     
     input = input_format[0]
@@ -242,6 +248,19 @@ def evaluate_ambiguity(trainin,gold,predict,file_out,file_out_errors,input_forma
             morfs = lineitems[pred].split(' ')
             for m in morfs:
                 train_lexicon_m[m] += 1
+            if not word in test_dict.keys():
+                train_dict[word] = {}
+                train_dict[word][segm]={}
+                train_dict[word][segm][pos] = 1
+            else:
+                if segm not in test_dict[word].keys():
+                    train_dict[word][segm]={}
+                    train_dict[word][segm][pos]=1
+                else:
+                    if pos not in test_dict[word][segm].keys():
+                        train_dict[word][segm][pos]=1
+                    else:
+                        train_dict[word][segm][pos]+=1
 
     # Read lexicon of test set
     gold_f = codecs.open(gold,'r','utf-8')
@@ -335,17 +354,16 @@ def evaluate_ambiguity(trainin,gold,predict,file_out,file_out_errors,input_forma
                     errors[(w,pred_dict_ext[(w,allc)], w_segm)] = [lines]
                 else:
                     errors[(w,pred_dict_ext[(w,allc)], w_segm)].append(lines)
-                        
 
-    print "\nDATA:"
-    print "\n# of ambigous source word tokens        %d (%.2f%%)" % (amb, amb/sum(test_lexicon_w.values())*100)
-    print "\n# can be POS disambiguated:        %d (%.2f%%)" % (pos_disamb, pos_disamb/amb*100)
+    print "\nDATA:\n"
+    print "{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens:", amb, amb/sum(test_lexicon_w.values())*100)
+    print "{:<50} {:21d} {:8.2f}%\n".format(" - can be POS disambiguated:", pos_disamb, pos_disamb/amb*100)
 
-    print "\nPERFORMANCE:"
-    print "\n        Number of predictions total: %d" % allc
-    print "\nNumber of correct predictions total: %d (%.2f%%)" % (corr, corr/allc*100)
-    print "\n                         - ambigous: %d (%.2f%%)" % (corr_amb, corr_amb/amb*100)
-    print "\n                  - POS disambigous: %d (%.2f%%)" % (corr_pos_disamb, corr_pos_disamb/pos_disamb*100)
+    print "\nPERFORMANCE:\n"
+    print "{:>60} {:11d}\n".format("Number of predictions total:", allc)
+    print "{:>60} {:11d} {:8.2f}%\n".format("Number of correct predictions total:", corr, corr/allc*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- ambigous:", corr_amb, corr_amb/amb*100)
+    print "{:>60} {:11d} {:8.2f}%\n".format("- ambigous:", corr_pos_disamb, corr_pos_disamb/pos_disamb*100)
 
     with codecs.open(file_out_errors,'w','utf-8') as f:
     #f.write("\n\nERRORS:\n")
@@ -363,6 +381,7 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
     train_lexicon_w = defaultdict(int)
     test_lexicon_w = defaultdict(int)
     test_dict = {} # test_word: dict(predict:freq)
+    train_dict = {} # train_word: dict(predict:freq)
 
     input = input_format[0]
     pred = input_format[1]
@@ -381,6 +400,14 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
             morfs = lineitems[pred].split(' ')
             for m in morfs:
                 train_lexicon_m[m] += 1
+            if not word in train_dict.keys():
+                train_dict[word] = {}
+                train_dict[word][segm]=1
+            else:
+                if segm not in train_dict[word].keys():
+                    train_dict[word][segm]=1
+                else:
+                    train_dict[word][segm]+=1
 
     if ext_trainin: # extra train data for LM training, one-colum
         trainin_ext_f = codecs.open(ext_trainin,'r','utf-8')
@@ -422,29 +449,62 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
     allc = 0 # total number of predictions  (that is the number of words in the input (gold))
     corr = 0 # total number of correct predictions
     
-    
-#    segm_test = {k:sum(v.values()) for k,v in test_dict.items()}
-#    print sum(segm_test.values())
-    amb_segm_test = {k:v for k,v in test_dict.items() if len(v)>1}
-    amb_segm_test_freq = {k:sum(v.values()) for k,v in amb_segm_test.items()}
+    amb_segm_test_candidates = {k:v for k,v in test_dict.items() if k in train_dict.keys()} #the values are test frequencies - for statistics
+    amb_segm_train = {k:train_dict[k] for k,v in amb_segm_test_candidates.items() if len(train_dict[k])>1} # the values are train frequencies - for prediction
+    amb_segm_test = {k:v for k,v in amb_segm_test_candidates.items() if len(train_dict[k])>1} # the values are test frequencies - for statistics
+    #    print amb_segm_train.items()[:10]
+    amb_segm_test_freq = {k:sum(v.values()) for k,v in amb_segm_test.items()}  # the values are test frequencies - for statistics
     amb = sum(amb_segm_test_freq.values())
     corr_amb = 0 # number of correct ambigous
-
-    not_amb_segm_test = {k:v for k,v in test_dict.items() if len(v)==1}
-    seen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if k in train_lexicon_w.keys()}
+    
+    amb_segm_test_tie_candidates = {k:v.values() for k,v in amb_segm_train.items()} # the values are train frequencies - for tie candidates filtering based on train set
+    amb_segm_test_tie_check = {k:v for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)} # the values are train frequencies - for printing
+    #    print amb_segm_test_tie_check.items()
+    amb_segm_test_tie = {k:sum(test_dict[k].values()) for k,v in amb_segm_test_tie_candidates.items() if v.count(v[0]) == len(v)}   # the values are test frequencies - for statistics
+    amb_tie = sum(amb_segm_test_tie.values())
+    corr_amb_tie = 0 # number of correct ambigous with tie
+    amb_notie = amb - amb_tie
+    corr_amb_notie = 0 # number of correct ambigous with tie
+    
+    
+    
+    not_amb_segm_test = {k:v for k,v in test_dict.items() if k not in amb_segm_test.keys()}
+    seen_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if k in train_lexicon_w.keys()}
     seen = sum(seen_freq.values())
     corr_seen = 0 # number of correct seen words
-
-    unseen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if not k in train_lexicon_w.keys()}
+    
+    unseen_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if not k in train_lexicon_w.keys()}
     unseen = sum(unseen_freq.values())
-
-    unseen_m_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if ( not k in train_lexicon_w.keys() and not all(m in train_lexicon_m.keys() for m in v.keys()[0].split(' ')) )}
+    
+    unseen_m_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if ( not k in train_lexicon_w.keys() and not all(m in train_lexicon_m.keys() for m in v.keys()[0].split(' ')) )}
     unseen_m = sum(unseen_m_freq.values())
     corr_unseen_m = 0 # number of correct unseen words - new morphs
-
+    
     unseen_new_comb = unseen - unseen_m
     corr_unseen_comb = 0 # number of correct unseen words - new combinations
     
+##    segm_test = {k:sum(v.values()) for k,v in test_dict.items()}
+##    print sum(segm_test.values())
+#    amb_segm_test = {k:v for k,v in test_dict.items() if len(v)>1}
+#    amb_segm_test_freq = {k:sum(v.values()) for k,v in amb_segm_test.items()}
+#    amb = sum(amb_segm_test_freq.values())
+#    corr_amb = 0 # number of correct ambigous
+#
+#    not_amb_segm_test = {k:v for k,v in test_dict.items() if len(v)==1}
+#    seen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if k in train_lexicon_w.keys()}
+#    seen = sum(seen_freq.values())
+#    corr_seen = 0 # number of correct seen words
+#
+#    unseen_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if not k in train_lexicon_w.keys()}
+#    unseen = sum(unseen_freq.values())
+#
+#    unseen_m_freq = {k:v.values()[0] for k,v in not_amb_segm_test.items() if ( not k in train_lexicon_w.keys() and not all(m in train_lexicon_m.keys() for m in v.keys()[0].split(' ')) )}
+#    unseen_m = sum(unseen_m_freq.values())
+#    corr_unseen_m = 0 # number of correct unseen words - new morphs
+#
+#    unseen_new_comb = unseen - unseen_m
+#    corr_unseen_comb = 0 # number of correct unseen words - new combinations
+
     gold_f.seek(0)
     for i,line in enumerate(gold_f):
         #if i < 5:
@@ -468,19 +528,21 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
             if pred_dict_ext[(w,allc)] == w_segm:
                 corr += 1
                 
-                if w in amb_segm_test_freq.keys():
+                if w in amb_segm_test.keys():
                     corr_amb += 1
+                    if w in amb_segm_test_tie.keys():
+                        corr_amb_tie +=1
+                    else:
+                        corr_amb_notie +=1
                 else:
                     if w not in train_lexicon_w.keys():
-                        
+                        corr_unseen += 1
                         if all(m in train_lexicon_m.keys() for m in w_segm_morfs):
                             corr_unseen_comb += 1
                         else:
                             corr_unseen_m += 1
                     else:
                         corr_seen += 1
-                    
-                        
             else:
 
                 if (w,pred_dict_ext[(w,allc)], w_segm) not in errors.keys():
@@ -492,34 +554,30 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
     with codecs.open(file_out,'w','utf-8') as f:
         
         # Print statistics
-        
-        f.write("\nDATA:")
-        f.write("\n   TRAIN  TEST:")
-        f.write("\n# of target segment tokens %d  %d" % (sum(train_lexicon_m.values()), sum(test_lexicon_m.values())))
-        f.write("\n# of source word tokens %d  %d" % (sum(train_lexicon_w.values()), sum(test_lexicon_w.values())))
-        f.write("\n# of ambigous source word tokens        %d (%.2f%%)" % (amb, float(amb)/float(sum(test_lexicon_w.values()))*100))
-        f.write("\n# of seen source word tokens        %d (%.2f%%)" % (seen, float(seen)/float(sum(test_lexicon_w.values()))*100))
-        f.write("\n# of unseen source word tokens      %d (%.2f%%)" % (unseen, float(unseen)/float(sum(test_lexicon_w.values()))*100))
-        f.write("\n# of unseen source word tokens - new target segments       %d (%.2f%%)" % (unseen_m, float(unseen_m)/float(sum(test_lexicon_w.values()))*100))
-        f.write("\n# of unseen word tokens - new combination        %d (%.2f%%)" % (unseen_new_comb, float(unseen_new_comb)/float(sum(test_lexicon_w.values()))*100))
 
-
-        f.write("============================================================================================")
+        total_w_pred = sum(test_lexicon_w.values())
+        f.write("{:<50} {:>10} {:>10}\n".format("DATA","TRAIN", "TEST"))
+        f.write("{:<50} {:12d} {:8d}\n".format("# of target segment tokens:", sum(train_lexicon_m.values()), sum(test_lexicon_m.values())))
+        f.write("{:<50} {:12d} {:8d}\n".format("# of source word tokens:", sum(train_lexicon_w.values()), total_w_pred))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens:", amb, amb/total_w_pred*100))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens - ties:", amb_tie, amb_tie/total_w_pred*100))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of ambigous source word tokens - no ties:", amb_notie, amb_notie/total_w_pred*100))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of unique source word tokens:", seen, seen/total_w_pred*100))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of new source word tokens:", unseen, unseen/total_w_pred*100))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of new source word tokens - new target segments:", unseen_m, unseen_m/total_w_pred*100))
+        f.write("{:<50} {:21d} {:8.2f}%\n".format("# of new source word tokens - new combination:", unseen_new_comb, unseen_new_comb/total_w_pred*100))
     
-        f.write("\nPERFORMANCE:")
-        f.write("\n        Number of predictions total: %d" % allc)
-        f.write("\nNumber of correct predictions total: %d (%.2f%%)" % (corr, float(corr)/float(allc)*100))
-        f.write("\n                         - ambigous: %d (%.2f%%)"
-                % (corr_amb, float(corr_amb)/float(amb)*100))
+        f.write("\nPERFORMANCE:\n")
+        f.write("{:>60} {:11d}\n".format("Number of predictions total:", allc))
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("Number of correct predictions total:", corr, corr/allc*100))
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous(ties):", corr_amb_tie, corr_amb_tie/amb_tie*100))
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous(no ties):", corr_amb_notie, corr_amb_notie/amb_notie*100))
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous:", corr_amb, corr_amb/amb*100))
         if seen !=0:
-            f.write("\n                   - seen words: %d (%.2f%%)"
-                  % (corr_seen, float(corr_seen)/float(seen)*100))
-        f.write("\n            - unseen (new morphemes): %d (%.2f%%)"
-                % (corr_unseen_m, float(corr_unseen_m)/float(unseen_m)*100))
-        f.write("\n            - unseen (new combination): %d (%.2f%%)"
-                % (corr_unseen_comb, float(corr_unseen_comb)/float(unseen_new_comb)*100))
-    
-        f.write("============================================================================================")
+            f.write("{:>60} {:11d} {:8.2f}%\n".format("- unique:", corr_seen, corr_seen/seen*100))
+        print "{:>60} {:11d} {:8.2f}%\n".format("- new:", corr_unseen, corr_unseen/unseen*100)
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("- new (new morphemes):", corr_unseen_m, corr_unseen_m/unseen_m*100))
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("- new (new combination):", corr_unseen_comb, corr_unseen_comb/unseen_new_comb*100))
 
     with codecs.open(file_out_errors,'w','utf-8') as f:
         #f.write("\n\nERRORS:\n")
