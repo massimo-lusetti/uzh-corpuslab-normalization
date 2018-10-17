@@ -37,7 +37,7 @@ export BEAM=$4
 
 export CONFIG=$5
 
-for (( n=0; n<=0; n++ )) #data split (from 0 till 9)
+for (( n=6; n<=9; n++ )) #data split (from 0 till 9)
 
 do
 # Data paths depend on the data split
@@ -123,7 +123,7 @@ elif [[ $CONFIG == "nmt" ]]; then # Only evaluate ensembles of nmt models
     PYTHONIOENCODING=utf8 python $DIR/src/norm_soft.py ensemble_test ${nmt_path} --test_path=$TESTDATA --beam=$BEAM --pred_path=test.out $RESULTS --input_format=0,2
 
     # evaluate on tokens - detailed output
-    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=0,2
+    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=0,2
 
 else # nmt + LM
 
@@ -246,7 +246,7 @@ cp SDecoder_cfg.txt.ZMERT.final $RESULTS/params-mert-ens.txt
 #
 #
 ##evaluate on tokens - detailed output for the test set
-PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=0,2
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt --input_format=0,2
 
 #rm -r $MERTEXPER
 

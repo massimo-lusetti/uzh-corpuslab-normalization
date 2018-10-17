@@ -444,7 +444,14 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
 
     errors = {}
 
-        
+    # Collect predictions
+    predict_f = codecs.open(predict,'r','utf-8')
+    pred_dict_ext = {}
+    for j, line in enumerate(predict_f):
+        line = line.strip().lower() if lowercase else line.strip()
+        w, w_segm = line.split('\t')
+        pred_dict_ext[(w,j+1)] = w_segm
+
     #LM Evaluation
     allc = 0 # total number of predictions  (that is the number of words in the input (gold))
     corr = 0 # total number of correct predictions
@@ -475,6 +482,7 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
     
     unseen_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if not k in train_lexicon_w.keys()}
     unseen = sum(unseen_freq.values())
+    corr_unseen = 0
     
     unseen_m_freq = {k:sum(v.values()) for k,v in not_amb_segm_test.items() if ( not k in train_lexicon_w.keys() and not all(m in train_lexicon_m.keys() for m in v.keys()[0].split(' ')) )}
     unseen_m = sum(unseen_m_freq.values())
@@ -570,12 +578,15 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
         f.write("\nPERFORMANCE:\n")
         f.write("{:>60} {:11d}\n".format("Number of predictions total:", allc))
         f.write("{:>60} {:11d} {:8.2f}%\n".format("Number of correct predictions total:", corr, corr/allc*100))
-        f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous(ties):", corr_amb_tie, corr_amb_tie/amb_tie*100))
-        f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous(no ties):", corr_amb_notie, corr_amb_notie/amb_notie*100))
-        f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous:", corr_amb, corr_amb/amb*100))
+        if amb !=0:
+            f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous:", corr_amb, corr_amb/amb*100))
+        if amb_tie !=0:
+            f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous(ties):", corr_amb_tie, corr_amb_tie/amb_tie*100))
+        if amb_notie !=0:
+            f.write("{:>60} {:11d} {:8.2f}%\n".format("- ambigous(no ties):", corr_amb_notie, corr_amb_notie/amb_notie*100))
         if seen !=0:
             f.write("{:>60} {:11d} {:8.2f}%\n".format("- unique:", corr_seen, corr_seen/seen*100))
-        print "{:>60} {:11d} {:8.2f}%\n".format("- new:", corr_unseen, corr_unseen/unseen*100)
+        f.write("{:>60} {:11d} {:8.2f}%\n".format("- new:", corr_unseen, corr_unseen/unseen*100))
         f.write("{:>60} {:11d} {:8.2f}%\n".format("- new (new morphemes):", corr_unseen_m, corr_unseen_m/unseen_m*100))
         f.write("{:>60} {:11d} {:8.2f}%\n".format("- new (new combination):", corr_unseen_comb, corr_unseen_comb/unseen_new_comb*100))
 
