@@ -946,7 +946,7 @@ if __name__ == "__main__":
                     'LAYERS': int(hyperparams_dict['LAYERS']),
                         'VOCAB_PATH': hyperparams_dict['VOCAB_PATH']}
             # a fix for vocab path when transferring files b/n vm
-            model_hyperparams['VOCAB_PATH'] = vocab_path = check_path(path + '/vocab.txt', 'vocab_path', is_data_path=False)
+            model_hyperparams['VOCAB_PATH'] = check_path(path + '/vocab.txt', 'vocab_path', is_data_path=False)
             ed_model_params.append(pc.add_subcollection('ed{}'.format(i)))
             ed_model =  SoftAttention(ed_model_params[i], model_hyperparams,best_model_path)
             
