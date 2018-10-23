@@ -132,6 +132,9 @@ elif [[ $CONFIG == "nmt" ]]; then # Only evaluate ensembles of nmt models
     # evaluate on tokens - detailed output
     PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/test.eval.det $RESULTS/Errors_test.txt --input_format=${INPUT_FORMAT}
 
+    ##evaluate ambuguity on tokens - detailed output for the test set
+    PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval_ambiguity $TRAINDATA $TESTDATA $RESULTS/test.out.predictions $RESULTS/test.eval.det.pos $RESULTS/Errors_test_pos.txt --input_format=0,1,2
+
 else # nmt + LM
 
 ##########################################
@@ -258,6 +261,9 @@ PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA 
 else
 PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/test.eval.det $RESULTS/Errors_test.txt
 fi
+
+##evaluate ambuguity on tokens - detailed output for the test set
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval_ambiguity $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/test.eval.det.pos $RESULTS/Errors_test_pos.txt  --input_format=0,1,2
 #rm -r $MERTEXPER
 
 fi

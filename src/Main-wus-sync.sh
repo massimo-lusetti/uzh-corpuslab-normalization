@@ -241,7 +241,7 @@ cp SDecoder_cfg.txt.ZMERT.final $RESULTS/params-mert-ens.txt
 #
 #
 ##evaluate on tokens - detailed output for the test set
-PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt 
+PYTHONIOENCODING=utf8 python $DIR/src/accuracy-det.py eval $TRAINDATA $TESTDATA $RESULTS/test_out_mert.txt $RESULTS/Accuracy_test_det.txt $RESULTS/Errors_test.txt
 
 #rm -r $MERTEXPER
 
