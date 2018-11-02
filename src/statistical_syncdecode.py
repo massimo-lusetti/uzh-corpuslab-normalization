@@ -6,7 +6,7 @@ Usage:
   statistical_syncdecode.py [--dynet-mem MEM] [--beam=BEAM] [--pred_path=PRED_FILE]
   ED_MODEL_FOLDER MODEL_FOLDER --test_path=TEST_FILE [--input_format=INPUT_FORMAT]
   [--lm_predictors=LM_TYPES] [--lm_paths=LM_PATHS] [--lm_orders=LM_ORDERS]
-  [--predictor_weights=WEIGHTS] [--output_format=FORMAT] [--lowercase=LOW] [--morph_vocab=MORPH_VOCAB] [--nmt_type=NMT_TYPE]
+  [--predictor_weights=WEIGHTS] [--output_format=FORMAT] [--lowercase=LOW] [--morph_vocab=MORPH_VOCAB] [--nmt_type=NMT_TYPE] [--verbose] [--indices=INDICES]
   
 Arguments:
   ED_MODEL_FOLDER  ED model(s) folder, possibly relative to RESULTS_FOLDER, comma-separated
@@ -28,6 +28,8 @@ Options:
   --output_format=FORMAT        format of the output: 0 - only predictions, 1 - n-best form with scores [default: 0]
   --morph_vocab=MORPH_VOCAB     mapping from morphs to int, needed for LM over morphs
   --nmt_type=NMT_TYPE           nmt model type: norm_soft, norm_soft_pos [default: 'norm_soft']
+  --verbose                     verbose decoding
+  --indices=INDICES             coma-seprated list of indices in the test data to be decoded
 """
 
 from __future__ import division
@@ -232,9 +234,12 @@ def evaluate_syncbeam_nofeat(data, ed_models, lm_models, weights, beam, format, 
         if prediction == output:
             correct += 1
 #        else:
-        if i < 5:
-            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+#        if i < 5:
+#            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
 #            print predictions
+        if verbose:
+            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+            print predictions
         if format == 0:
             final_results.append((input,prediction))
         else:
@@ -255,11 +260,11 @@ def evaluate_syncbeam_feat(data, ed_models, lm_models, weights, beam, format, ve
         #        print i,predictions
         if prediction == output.lower():
             correct += 1
-        if i < 5:
+#        if i < 5:
+#            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
+        if verbose:
             print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
-        #        else:
-        #            print u'{}, input: {}, pred: {}, true: {}'.format(i, input, prediction, output)
-        #            print predictions
+            print predictions
         if format == 0:
             final_results.append((input,prediction))
         else:
@@ -356,8 +361,13 @@ if __name__ == "__main__":
     # save best dev model parameters and predictions
     print 'Evaluating on test..'
     t = time.clock()
-#    accuracy, test_results = evaluate_syncbeam(test_data.iter(indices=[0]), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']), verbose =True)
-    accuracy, test_results = evaluate_syncbeam(test_data.iter(), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']))
+#    accuracy, test_results = evaluate_syncbeam(test_data.iter(indeces=1), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']), verbose =True)
+#    accuracy, test_results = evaluate_syncbeam(test_data.iter(), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']))
+    if arguments['--indices']:
+        indices = [int(ind) for ind in arguments['--indices'].split(',')]
+        accuracy, test_results = evaluate_syncbeam(test_data.iter(indices), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']), verbose=arguments['--verbose'])
+    else:
+        accuracy, test_results = evaluate_syncbeam(test_data.iter(), ed_models, lm_models, weights, int(arguments['--beam']), int(arguments['--output_format']), verbose=arguments['--verbose'])
     print 'Time: {}'.format(time.clock()-t)
     print 'accuracy: {}'.format(accuracy)
     write_pred_file(output_file_path, test_results, int(arguments['--output_format']))

@@ -813,22 +813,20 @@ def evaluate(trainin,gold,predict,file_out,file_out_errors,input_format,lowercas
 
     with codecs.open(file_out_errors,'w','utf-8') as f:
         #f.write("\n\nERRORS:\n")
-        f.write(u'{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format("word","prediction", "gold", "err_freq", "ambigous?", "new?", "unique?", "lines(test)"))
+        f.write(u'{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format("word","prediction", "gold", "err_freq", "ambigous?", "new?", "unique?", "new morphemes?", "lines(test)"))
         orderd_w = sorted(errors.keys(), key=lambda v: v[1], reverse=True)
         for (w,pred,true_pred) in orderd_w:
 #            seen_w = w in train_lexicon_w.keys()
 #            seen_w, new_m = 'NA','NA'
-            w_new,w_unique,w_amb = False, False, False
+            w_new,w_unique,w_amb,w_new_m = False, False, False,False
             amb_type = w in amb_segm_test.keys()
             if not amb_type:
                 if w not in train_lexicon_w.keys():
                     w_new = True
+                    w_new_m = not all(m in train_lexicon_m.keys() for m in true_pred.split(' '))
                 else:
                     w_unique = True
-#                seen_w = w in train_lexicon_w.keys()
-#                if not seen_w:
-#                    new_m = not all(m in train_lexicon_m.keys() for m in true_pred.split(' '))
-            f.write(u'{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(w, pred, true_pred, len(errors[(w,pred,true_pred)]), amb_type, w_new, w_unique, ", ".join(errors[(w,pred,true_pred)])))
+            f.write(u'{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n'.format(w, pred, true_pred, len(errors[(w,pred,true_pred)]), amb_type, w_new, w_unique, w_new_m, ", ".join(errors[(w,pred,true_pred)])))
 
 if __name__ == "__main__":
     arguments = docopt(__doc__)
